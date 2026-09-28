@@ -3,6 +3,8 @@ MorphoAqua - Stage 1C
 
 Full 6-DOF Rigid-Body Hover Simulation
 
+This version contains a corrected quadrotor motor mixer.
+
 State:
 
 Position:
@@ -18,10 +20,13 @@ Angular velocity:
     p, q, r
 
 
+
 """
+
 
 import numpy as np
 import matplotlib.pyplot as plt
+
 
 from robot_parameters import (
 
@@ -87,12 +92,12 @@ from motor_model import (
 
 
 # ============================================================
-# ROTOR THRUST -> RPM
+# THRUST TO RPM
 # ============================================================
 
 def thrust_to_rpm(thrust):
 
-    if thrust <= 0:
+    if thrust <= 0.0:
 
         return 0.0
 
@@ -136,20 +141,33 @@ def motor_mixer(
 ):
 
     """
+    Quadrotor X configuration.
 
-    X configuration:
+             FRONT
 
-             Front
+        M1 -------- M2
+          \        /
+           \      /
+           /      \
+          /        \
+        M4 -------- M3
 
-       M1 -------- M2
-          \      /
-           \    /
-           /    \
-          /      \
-       M4 -------- M3
+    Physical equations used:
 
-    The mixer converts desired total thrust and
-    body torques into individual rotor thrusts.
+        T  = T1 + T2 + T3 + T4
+
+        tau_roll =
+            L/sqrt(2) *
+            (T1 - T2 - T3 + T4)
+
+        tau_pitch =
+            L/sqrt(2) *
+            (-T1 - T2 + T3 + T4)
+
+        tau_yaw =
+            KM *
+            (T1 - T2 + T3 - T4)
+
     """
 
     arm = (
@@ -160,15 +178,39 @@ def motor_mixer(
     )
 
 
+    # --------------------------------------------------------
+    # CORRECT PHYSICAL MIXER MATRIX
+    # --------------------------------------------------------
+
     mixer = np.array([
 
-        [1.0,  1.0 / arm, -1.0 / arm,  1.0 / KM],
+        [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+        ],
 
-        [1.0, -1.0 / arm, -1.0 / arm, -1.0 / KM],
+        [
+            arm,
+            -arm,
+            -arm,
+            arm
+        ],
 
-        [1.0, -1.0 / arm,  1.0 / arm,  1.0 / KM],
+        [
+            -arm,
+            -arm,
+            arm,
+            arm
+        ],
 
-        [1.0,  1.0 / arm,  1.0 / arm, -1.0 / KM]
+        [
+            KM,
+            -KM,
+            KM,
+            -KM
+        ]
 
     ])
 
@@ -183,12 +225,15 @@ def motor_mixer(
     ])
 
 
+    # --------------------------------------------------------
+    # SOLVE FOR INDIVIDUAL MOTOR THRUSTS
+    # --------------------------------------------------------
+
     try:
 
         thrusts = np.linalg.solve(
 
             mixer,
-
             desired
 
         )
@@ -202,16 +247,32 @@ def motor_mixer(
         )
 
 
-    thrusts = np.clip(
+    # --------------------------------------------------------
+    # MOTOR PHYSICAL LIMIT
+    # --------------------------------------------------------
 
-        thrusts,
-        0.0,
-        KF * (
+    maximum_motor_thrust = (
+
+        KF
+        *
+        (
             MAX_RPM
             * 2.0
             * np.pi
             / 60.0
-        ) ** 2
+        )
+        ** 2
+
+    )
+
+
+    thrusts = np.clip(
+
+        thrusts,
+
+        0.0,
+
+        maximum_motor_thrust
 
     )
 
@@ -226,27 +287,53 @@ def motor_mixer(
 def reference_position(t):
 
     """
+    Mission:
 
-    0 - 2 seconds:
-        smooth takeoff to 2 m
+    0 - 2 s:
+        Smooth takeoff to 2 m
 
-    2 - 9 seconds:
-        hover
+    2 - 9 s:
+        2 m hover
 
-    9 - 11 seconds:
-        smooth landing
+    9 - 11 s:
+        Smooth landing
 
+    11+ s:
+        Ground
     """
+
+    # --------------------------------------------------------
+    # TAKEOFF
+    # --------------------------------------------------------
 
     if t < 2.0:
 
-        progress = t / 2.0
+        progress = (
 
-        z = TARGET_Z * progress
+            t / 2.0
+
+        )
+
+        z = (
+
+            TARGET_Z
+            * progress
+
+        )
+
+
+    # --------------------------------------------------------
+    # HOVER
+    # --------------------------------------------------------
 
     elif t < 9.0:
 
         z = TARGET_Z
+
+
+    # --------------------------------------------------------
+    # LANDING
+    # --------------------------------------------------------
 
     elif t < 11.0:
 
@@ -257,11 +344,17 @@ def reference_position(t):
 
         )
 
-        z = TARGET_Z * (
+        z = (
 
-            1.0 - progress
+            TARGET_Z
+            * (1.0 - progress)
 
         )
+
+
+    # --------------------------------------------------------
+    # GROUND
+    # --------------------------------------------------------
 
     else:
 
@@ -284,7 +377,7 @@ def reference_position(t):
 def run_simulation():
 
     # ========================================================
-    # INITIAL STATE
+    # INITIAL POSITION
     # ========================================================
 
     position = np.array([
@@ -296,6 +389,10 @@ def run_simulation():
     ])
 
 
+    # ========================================================
+    # INITIAL VELOCITY
+    # ========================================================
+
     velocity = np.array([
 
         0.0,
@@ -305,6 +402,10 @@ def run_simulation():
     ])
 
 
+    # ========================================================
+    # INITIAL ATTITUDE
+    # ========================================================
+
     angles = np.array([
 
         0.0,
@@ -313,6 +414,10 @@ def run_simulation():
 
     ])
 
+
+    # ========================================================
+    # INITIAL ANGULAR VELOCITY
+    # ========================================================
 
     angular_rates = np.array([
 
@@ -338,7 +443,7 @@ def run_simulation():
 
 
     # ========================================================
-    # CONTROLLERS
+    # POSITION CONTROLLER
     # ========================================================
 
     position_controller = PositionController(
@@ -359,6 +464,10 @@ def run_simulation():
 
     )
 
+
+    # ========================================================
+    # ATTITUDE CONTROLLER
+    # ========================================================
 
     attitude_controller = AttitudeController(
 
@@ -450,14 +559,14 @@ def run_simulation():
 
 
     # ========================================================
-    # SIMULATION LOOP
+    # MAIN SIMULATION LOOP
     # ========================================================
 
     for i, t in enumerate(time):
 
 
         # ====================================================
-        # TARGET
+        # TARGET POSITION
         # ====================================================
 
         target_position = (
@@ -514,24 +623,24 @@ def run_simulation():
         # ATTITUDE CONTROLLER
         # ====================================================
 
-        torque = attitude_controller.update(
+        torque_command = (
 
-            desired_angles,
+            attitude_controller.update(
 
-            angles,
+                desired_angles,
 
-            angular_rates
+                angles,
+
+                angular_rates
+
+            )
 
         )
 
 
         # ====================================================
-        # ATTITUDE-DEPENDENT THRUST
+        # CURRENT BODY Z AXIS
         # ====================================================
-
-        # The controller requests a force magnitude.
-        # Convert desired world-frame force to required
-        # body thrust along the current body Z axis.
 
         R = rotation_matrix(
 
@@ -545,28 +654,77 @@ def run_simulation():
         body_z = R[:, 2]
 
 
-        thrust = (
+        # ====================================================
+        # THRUST DIRECTION FACTOR
+        # ====================================================
 
-            desired_force
-            * np.dot(
-                body_z,
-                np.array([
-                    0.0,
-                    0.0,
-                    1.0
-                ])
-            )
+        vertical_component = np.dot(
+
+            body_z,
+
+            np.array([
+                0.0,
+                0.0,
+                1.0
+            ])
 
         )
 
 
-        # Prevent negative thrust.
+        vertical_component = max(
 
-        thrust = max(
+            vertical_component,
+            0.20
+
+        )
+
+
+        # ====================================================
+        # REQUIRED BODY THRUST
+        # ====================================================
+
+        required_thrust = (
+
+            desired_force
+            / vertical_component
+
+        )
+
+
+        # ====================================================
+        # MAXIMUM TOTAL THRUST
+        # ====================================================
+
+        maximum_motor_thrust = (
+
+            KF
+            *
+            (
+                MAX_RPM
+                * 2.0
+                * np.pi
+                / 60.0
+            )
+            ** 2
+
+        )
+
+
+        maximum_total_thrust = (
+
+            4.0
+            * maximum_motor_thrust
+
+        )
+
+
+        required_thrust = np.clip(
+
+            required_thrust,
 
             0.0,
 
-            thrust
+            maximum_total_thrust
 
         )
 
@@ -575,27 +733,37 @@ def run_simulation():
         # MOTOR MIXING
         # ====================================================
 
-        motor_thrusts = motor_mixer(
+        commanded_motor_thrusts = (
 
-            thrust,
+            motor_mixer(
 
-            torque[0],
+                required_thrust,
 
-            torque[1],
+                torque_command[0],
 
-            torque[2]
+                torque_command[1],
+
+                torque_command[2]
+
+            )
 
         )
 
 
+        # ====================================================
+        # CONVERT THRUST TO RPM
+        # ====================================================
+
         commanded_rpms = np.array([
 
             thrust_to_rpm(
-                motor_thrust
+
+                thrust
+
             )
 
-            for motor_thrust
-            in motor_thrusts
+            for thrust
+            in commanded_motor_thrusts
 
         ])
 
@@ -626,13 +794,18 @@ def run_simulation():
 
         # ====================================================
         # ACTUAL MOTOR THRUST
-        # ========================================================
+        # ====================================================
 
         actual_motor_thrusts = np.array([
 
-            thrust_from_rpm(rpm)
+            thrust_from_rpm(
 
-            for rpm in actual_rpms
+                rpm
+
+            )
+
+            for rpm
+            in actual_rpms
 
         ])
 
@@ -640,43 +813,36 @@ def run_simulation():
         actual_total_thrust = (
 
             np.sum(
+
                 actual_motor_thrusts
+
             )
 
         )
 
 
         # ====================================================
-        # ACTUAL MOTOR TORQUES
+        # ACTUAL TORQUES
         # ====================================================
 
-        actual_torques = np.array([
+        arm = (
 
-            arm := (
+            ARM_LENGTH
+            / np.sqrt(2.0)
 
-                ARM_LENGTH
-                / np.sqrt(2.0)
+        )
 
-            ),
-
-            0.0,
-            0.0
-
-        ])
-
-
-        # Calculate actual torques explicitly.
 
         actual_roll_torque = (
 
             arm
-            * (
+            *
+            (
 
                 actual_motor_thrusts[0]
-                + actual_motor_thrusts[3]
-
                 - actual_motor_thrusts[1]
                 - actual_motor_thrusts[2]
+                + actual_motor_thrusts[3]
 
             )
 
@@ -686,11 +852,11 @@ def run_simulation():
         actual_pitch_torque = (
 
             arm
-            * (
+            *
+            (
 
                 -actual_motor_thrusts[0]
                 -actual_motor_thrusts[1]
-
                 + actual_motor_thrusts[2]
                 + actual_motor_thrusts[3]
 
@@ -702,7 +868,8 @@ def run_simulation():
         actual_yaw_torque = (
 
             KM
-            * (
+            *
+            (
 
                 actual_motor_thrusts[0]
                 - actual_motor_thrusts[1]
@@ -821,9 +988,13 @@ def run_simulation():
                 INERTIA,
 
                 actual_torque
+
                 - np.cross(
+
                     angular_rates,
+
                     angular_momentum
+
                 )
 
             )
@@ -832,7 +1003,7 @@ def run_simulation():
 
 
         # ====================================================
-        # ANGULAR INTEGRATION
+        # ANGULAR RATE INTEGRATION
         # ====================================================
 
         angular_rates += (
@@ -907,18 +1078,21 @@ def run_simulation():
         )
 
 
-        # Keep yaw within [-pi, pi]
+        # ====================================================
+        # WRAP YAW
+        # ====================================================
 
         angles[2] = np.arctan2(
 
             np.sin(angles[2]),
+
             np.cos(angles[2])
 
         )
 
 
         # ====================================================
-        # STORE
+        # STORE RESULTS
         # ====================================================
 
         position_history[i, :] = position
@@ -977,8 +1151,9 @@ def calculate_metrics(
 
 ):
 
+
     # ========================================================
-    # POSITION ERRORS
+    # POSITION ERROR
     # ========================================================
 
     position_error = (
@@ -992,7 +1167,9 @@ def calculate_metrics(
     final_position_error = (
 
         np.linalg.norm(
+
             position_error[-1]
+
         )
 
     )
@@ -1019,13 +1196,9 @@ def calculate_metrics(
     )
 
 
-    altitude_error = np.abs(
-
-        position[:, 2]
-        - TARGET_Z
-
-    )
-
+    # ========================================================
+    # HOVER METRICS
+    # ========================================================
 
     hover_indices = np.where(
 
@@ -1046,6 +1219,7 @@ def calculate_metrics(
             ]
 
         )
+
 
         mean_hover_altitude_error = np.mean(
 
@@ -1095,27 +1269,39 @@ def calculate_metrics(
 
     maximum_roll = np.max(
 
-        np.abs(roll_deg)
+        np.abs(
+
+            roll_deg
+
+        )
 
     )
 
 
     maximum_pitch = np.max(
 
-        np.abs(pitch_deg)
+        np.abs(
+
+            pitch_deg
+
+        )
 
     )
 
 
     maximum_yaw = np.max(
 
-        np.abs(yaw_deg)
+        np.abs(
+
+            yaw_deg
+
+        )
 
     )
 
 
     # ========================================================
-    # VELOCITY
+    # SPEED
     # ========================================================
 
     speed = np.linalg.norm(
@@ -1193,19 +1379,31 @@ def calculate_metrics(
             final_velocity[2],
 
         "Final roll (deg)":
-            np.rad2deg(final_angles[0]),
+            np.rad2deg(
+
+                final_angles[0]
+
+            ),
 
         "Final pitch (deg)":
-            np.rad2deg(final_angles[1]),
+            np.rad2deg(
+
+                final_angles[1]
+
+            ),
 
         "Final yaw (deg)":
-            np.rad2deg(final_angles[2])
+            np.rad2deg(
+
+                final_angles[2]
+
+            )
 
     }
 
 
 # ============================================================
-# PLOT
+# PLOT RESULTS
 # ============================================================
 
 def plot_results(
@@ -1228,9 +1426,11 @@ def plot_results(
 
 ):
 
+
     fig, axes = plt.subplots(
 
         6,
+
         1,
 
         figsize=(12, 16),
@@ -1276,6 +1476,7 @@ def plot_results(
         time,
         target[:, 2],
         "--",
+
         label="Target Z"
 
     )
@@ -1352,8 +1553,11 @@ def plot_results(
 
         time,
         np.rad2deg(
+
             angles[:, 0]
+
         ),
+
         label="Roll"
 
     )
@@ -1363,8 +1567,11 @@ def plot_results(
 
         time,
         np.rad2deg(
+
             angles[:, 1]
+
         ),
+
         label="Pitch"
 
     )
@@ -1374,8 +1581,11 @@ def plot_results(
 
         time,
         np.rad2deg(
+
             angles[:, 2]
+
         ),
+
         label="Yaw"
 
     )
@@ -1438,6 +1648,7 @@ def plot_results(
 
         time,
         torque[:, 0],
+
         label="Roll torque"
 
     )
@@ -1447,6 +1658,7 @@ def plot_results(
 
         time,
         torque[:, 1],
+
         label="Pitch torque"
 
     )
@@ -1456,6 +1668,7 @@ def plot_results(
 
         time,
         torque[:, 2],
+
         label="Yaw torque"
 
     )
@@ -1529,8 +1742,8 @@ def main():
 
     print(
 
-        "FULL 6-DOF RIGID-BODY "
-        "HOVER SIMULATION"
+        "CORRECTED 6-DOF "
+        "RIGID-BODY HOVER SIMULATION"
 
     )
 
@@ -1623,15 +1836,6 @@ def main():
 
     print(
 
-        "Stage 1C simulation completed."
-
-    )
-
-
-    print()
-
-    print(
-
         "Controller configuration:"
 
     )
@@ -1660,6 +1864,13 @@ def main():
 
     print()
 
+    print(
+
+        "Stage 1C simulation completed."
+
+    )
+
+
     plot_results(
 
         time,
@@ -1680,6 +1891,10 @@ def main():
 
     )
 
+
+# ============================================================
+# PROGRAM ENTRY POINT
+# ============================================================
 
 if __name__ == "__main__":
 
