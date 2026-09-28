@@ -1,6 +1,7 @@
 """
-MorphoAqua - Stage 1
-Basic quadrotor simulation
+MorphoAqua - Stage 1B
+Closed-loop altitude control
+
 """
 
 import numpy as np
@@ -11,228 +12,381 @@ from robot_parameters import (
     GRAVITY,
     DT,
     SIMULATION_TIME,
-    INERTIA,
+    TARGET_ALTITUDE,
+    ALTITUDE_KP,
+    ALTITUDE_KI,
+    ALTITUDE_KD,
+    MAX_RPM,
 )
 
-from rotor_model import (
-    total_thrust,
-    hover_rpm,
+from controller import PIDController
+
+from motor_model import (
+    Motor,
+    thrust_from_rpm,
 )
 
-from dynamics import (
-    translational_acceleration,
-)
 
+def run_simulation():
 
-def run_simulation(
-    rpm,
-    initial_state=None,
-    simulation_time=SIMULATION_TIME,
-):
-    """
-    Run a basic translational simulation.
+    # =========================================
+    # INITIAL STATE
+    # =========================================
 
-    State:
+    altitude = 0.0
+    vertical_velocity = 0.0
 
-    [x, y, z,
-     vx, vy, vz,
-     roll, pitch, yaw,
-     p, q, r]
-    """
+    # Four motors
+    motors = [
+        Motor(),
+        Motor(),
+        Motor(),
+        Motor()
+    ]
 
-    steps = int(simulation_time / DT)
+    # =========================================
+    # PID CONTROLLER
+    # =========================================
 
-    if initial_state is None:
-        state = np.zeros(12)
-    else:
-        state = np.array(initial_state, dtype=float)
+    pid = PIDController(
+        kp=ALTITUDE_KP,
+        ki=ALTITUDE_KI,
+        kd=ALTITUDE_KD,
+
+        output_min=0.0,
+        output_max=MAX_RPM
+    )
+
+    # =========================================
+    # DATA STORAGE
+    # =========================================
+
+    steps = int(SIMULATION_TIME / DT)
 
     time = np.arange(steps) * DT
 
-    history = np.zeros((steps, 12))
+    altitude_history = np.zeros(steps)
+    velocity_history = np.zeros(steps)
+
+    target_history = np.zeros(steps)
+
     thrust_history = np.zeros(steps)
 
-    for i in range(steps):
+    rpm_history = np.zeros((steps, 4))
 
-        # --------------------------------
-        # Rotor thrust
-        # --------------------------------
+    # =========================================
+    # SIMULATION LOOP
+    # =========================================
 
-        total_T, _ = total_thrust(
-            [rpm, rpm, rpm, rpm]
+    for i, t in enumerate(time):
+
+        # -------------------------------------
+        # Desired altitude
+        # -------------------------------------
+
+        if t < 2.0:
+
+            # Takeoff
+            target_altitude = 2.0
+
+        elif t < 7.0:
+
+            # Hover
+            target_altitude = 2.0
+
+        else:
+
+            # Landing
+            target_altitude = 0.0
+
+        target_history[i] = target_altitude
+
+        # -------------------------------------
+        # Controller
+        # -------------------------------------
+
+        # PID output is additional thrust command
+        thrust_command = pid.update(
+            target_altitude,
+            altitude,
+            DT
         )
 
-        # --------------------------------
-        # Current state
-        # --------------------------------
+        # -------------------------------------
+        # Add gravity compensation
+        # -------------------------------------
 
-        position = state[0:3]
+        required_hover_thrust = MASS * GRAVITY
 
-        velocity = state[3:6]
-
-        roll = state[6]
-        pitch = state[7]
-        yaw = state[8]
-
-        # --------------------------------
-        # Translational dynamics
-        # --------------------------------
-
-        acceleration = translational_acceleration(
-            velocity,
-            roll,
-            pitch,
-            yaw,
-            total_T,
+        total_desired_thrust = (
+            required_hover_thrust
+            + thrust_command
         )
 
-        # --------------------------------
-        # Euler integration
-        # --------------------------------
+        # -------------------------------------
+        # Convert total thrust to
+        # per-motor thrust
+        # -------------------------------------
 
-        state[0:3] += velocity * DT
+        motor_thrust = (
+            total_desired_thrust / 4.0
+        )
 
-        state[3:6] += acceleration * DT
+        # Convert thrust to RPM
+        omega = np.sqrt(
+            max(motor_thrust, 0.0)
+            / 1.0e-5
+        )
 
-        history[i] = state
+        commanded_rpm = (
+            omega * 60.0
+            / (2.0 * np.pi)
+        )
 
-        thrust_history[i] = total_T
+        commanded_rpm = np.clip(
+            commanded_rpm,
+            0,
+            MAX_RPM
+        )
 
-    return time, history, thrust_history
+        # -------------------------------------
+        # Update motor dynamics
+        # -------------------------------------
+
+        actual_rpms = []
+
+        for motor in motors:
+
+            rpm = motor.update(
+                commanded_rpm,
+                DT
+            )
+
+            actual_rpms.append(rpm)
+
+        actual_rpms = np.array(actual_rpms)
+
+        # -------------------------------------
+        # Calculate actual thrust
+        # -------------------------------------
+
+        actual_thrusts = np.array([
+            thrust_from_rpm(rpm)
+            for rpm in actual_rpms
+        ])
+
+        total_actual_thrust = np.sum(
+            actual_thrusts
+        )
+
+        # -------------------------------------
+        # Vertical dynamics
+        # -------------------------------------
+
+        net_force = (
+            total_actual_thrust
+            - MASS * GRAVITY
+        )
+
+        acceleration = (
+            net_force / MASS
+        )
+
+        # -------------------------------------
+        # Integrate motion
+        # -------------------------------------
+
+        vertical_velocity += (
+            acceleration * DT
+        )
+
+        altitude += (
+            vertical_velocity * DT
+        )
+
+        # Prevent falling below ground
+        if altitude < 0:
+
+            altitude = 0
+
+            if vertical_velocity < 0:
+                vertical_velocity = 0
+
+        # -------------------------------------
+        # Store results
+        # -------------------------------------
+
+        altitude_history[i] = altitude
+        velocity_history[i] = vertical_velocity
+
+        thrust_history[i] = total_actual_thrust
+
+        rpm_history[i, :] = actual_rpms
+
+    return (
+        time,
+        altitude_history,
+        velocity_history,
+        target_history,
+        thrust_history,
+        rpm_history
+    )
 
 
 def plot_results(
     time,
-    history,
-    thrust_history,
-    title,
+    altitude,
+    velocity,
+    target,
+    thrust,
+    rpm
 ):
-    """
-    Plot simulation results.
-    """
 
     fig, axes = plt.subplots(
-        3,
+        4,
         1,
-        figsize=(10, 10),
-        sharex=True,
+        figsize=(11, 12),
+        sharex=True
     )
 
-    # Position
-    axes[0].plot(
-        time,
-        history[:, 0],
-        label="X"
-    )
+    # =========================================
+    # ALTITUDE
+    # =========================================
 
     axes[0].plot(
         time,
-        history[:, 1],
-        label="Y"
+        altitude,
+        label="Actual altitude"
     )
 
     axes[0].plot(
         time,
-        history[:, 2],
-        label="Z"
+        target,
+        "--",
+        label="Target altitude"
     )
 
-    axes[0].set_ylabel("Position (m)")
-    axes[0].set_title(title)
+    axes[0].set_ylabel(
+        "Altitude (m)"
+    )
+
+    axes[0].set_title(
+        "MorphoAqua - Stage 1B Closed-Loop Flight"
+    )
+
     axes[0].legend()
     axes[0].grid(True)
 
-    # Velocity
-    axes[1].plot(
-        time,
-        history[:, 3],
-        label="Vx"
-    )
+    # =========================================
+    # VELOCITY
+    # =========================================
 
     axes[1].plot(
         time,
-        history[:, 4],
-        label="Vy"
+        velocity
     )
 
-    axes[1].plot(
-        time,
-        history[:, 5],
-        label="Vz"
+    axes[1].set_ylabel(
+        "Vertical velocity (m/s)"
     )
 
-    axes[1].set_ylabel("Velocity (m/s)")
-    axes[1].legend()
     axes[1].grid(True)
 
-    # Thrust
+    # =========================================
+    # THRUST
+    # =========================================
+
     axes[2].plot(
         time,
-        thrust_history,
+        thrust
     )
 
-    axes[2].set_xlabel("Time (s)")
-    axes[2].set_ylabel("Total thrust (N)")
+    axes[2].axhline(
+        MASS * GRAVITY,
+        linestyle="--",
+        label="Hover thrust"
+    )
+
+    axes[2].set_ylabel(
+        "Total thrust (N)"
+    )
+
+    axes[2].legend()
     axes[2].grid(True)
 
+    # =========================================
+    # MOTOR RPM
+    # =========================================
+
+    for i in range(4):
+
+        axes[3].plot(
+            time,
+            rpm[:, i],
+            label=f"Motor {i+1}"
+        )
+
+    axes[3].set_xlabel(
+        "Time (s)"
+    )
+
+    axes[3].set_ylabel(
+        "RPM"
+    )
+
+    axes[3].legend()
+    axes[3].grid(True)
+
     plt.tight_layout()
+
     plt.show()
 
 
 def main():
 
-    # --------------------------------
-    # Calculate hover RPM
-    # --------------------------------
+    print("=" * 60)
+    print("MORPHOAQUA - STAGE 1B")
+    print("CLOSED-LOOP ALTITUDE CONTROL")
+    print("=" * 60)
 
-    rpm = hover_rpm(
-        MASS,
-        GRAVITY
+    (
+        time,
+        altitude,
+        velocity,
+        target,
+        thrust,
+        rpm
+    ) = run_simulation()
+
+    print("\nSimulation complete.")
+
+    print(
+        f"Maximum altitude: "
+        f"{np.max(altitude):.3f} m"
     )
 
-    print("=" * 50)
-    print("MORPHOAQUA - STAGE 1")
-    print("=" * 50)
-
-    print(f"Robot mass       : {MASS:.2f} kg")
-    print(f"Gravity          : {GRAVITY:.2f} m/s²")
-    print(f"Weight           : {MASS * GRAVITY:.3f} N")
-    print(f"Hover RPM/rotor  : {rpm:.2f}")
-
-    total_T, thrusts = total_thrust(
-        [rpm, rpm, rpm, rpm]
+    print(
+        f"Final altitude: "
+        f"{altitude[-1]:.3f} m"
     )
 
-    print(f"Total thrust     : {total_T:.3f} N")
-    print(f"Thrust/rotor     : {thrusts[0]:.3f} N")
-
-    # --------------------------------
-    # Run hover simulation
-    # --------------------------------
-
-    time, history, thrust_history = run_simulation(
-        rpm=rpm
+    print(
+        f"Maximum velocity: "
+        f"{np.max(np.abs(velocity)):.3f} m/s"
     )
 
-    # --------------------------------
-    # Final state
-    # --------------------------------
-
-    print("\nFinal state:")
-    print(f"X  = {history[-1, 0]:.4f} m")
-    print(f"Y  = {history[-1, 1]:.4f} m")
-    print(f"Z  = {history[-1, 2]:.4f} m")
-
-    print("\nFinal velocity:")
-    print(f"Vx = {history[-1, 3]:.4f} m/s")
-    print(f"Vy = {history[-1, 4]:.4f} m/s")
-    print(f"Vz = {history[-1, 5]:.4f} m/s")
+    print(
+        f"Final motor RPM: "
+        f"{rpm[-1, 0]:.2f}"
+    )
 
     plot_results(
         time,
-        history,
-        thrust_history,
-        "MorphoAqua - Stage 1 Hover Test"
+        altitude,
+        velocity,
+        target,
+        thrust,
+        rpm
     )
 
 

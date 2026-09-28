@@ -1,7 +1,5 @@
-"""
-MorphoAqua - Stage 1
-Robot and simulation parameters
-"""
+
+
 
 import numpy as np
 
@@ -61,3 +59,19 @@ INERTIA = np.diag([IXX, IYY, IZZ])
 
 DT = 0.002              # seconds
 SIMULATION_TIME = 10.0  # seconds
+
+# =========================
+# CONTROL PARAMETERS
+# =========================
+
+TARGET_ALTITUDE = 2.0       # m
+
+# Maximum commanded total thrust
+MAX_TOTAL_THRUST = 4.0 * (
+    KF * (MAX_RPM * 2.0 * np.pi / 60.0) ** 2
+)
+
+# PID gains
+ALTITUDE_KP = 8.0
+ALTITUDE_KI = 1.0
+ALTITUDE_KD = 5.0
