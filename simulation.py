@@ -2,6 +2,19 @@
 MorphoAqua - Stage 1B
 Closed-loop altitude control
 
+Mission:
+
+0 m
+ ↓
+Takeoff
+ ↓
+2 m
+ ↓
+Hover
+ ↓
+0 m
+ ↓
+Land
 """
 
 import numpy as np
@@ -15,28 +28,49 @@ from robot_parameters import (
     TARGET_ALTITUDE,
     ALTITUDE_KP,
     ALTITUDE_KI,
-    ALTITUDE_KD,
+    ALTITUDE_KV,
     MAX_RPM,
+    KF,
 )
 
-from controller import PIDController
+from controller import AltitudeController
+from motor_model import Motor, thrust_from_rpm
 
-from motor_model import (
-    Motor,
-    thrust_from_rpm,
-)
+
+def thrust_to_rpm(thrust):
+
+    if thrust <= 0:
+        return 0.0
+
+    omega = np.sqrt(
+        thrust / KF
+    )
+
+    rpm = (
+        omega * 60.0
+        / (2.0 * np.pi)
+    )
+
+    return np.clip(
+        rpm,
+        0,
+        MAX_RPM
+    )
 
 
 def run_simulation():
 
     # =========================================
-    # INITIAL STATE
+    # INITIAL CONDITIONS
     # =========================================
 
     altitude = 0.0
     vertical_velocity = 0.0
 
-    # Four motors
+    # =========================================
+    # MOTORS
+    # =========================================
+
     motors = [
         Motor(),
         Motor(),
@@ -45,23 +79,39 @@ def run_simulation():
     ]
 
     # =========================================
-    # PID CONTROLLER
+    # CONTROLLER
     # =========================================
 
-    pid = PIDController(
+    max_motor_thrust = (
+        KF *
+        (
+            MAX_RPM
+            * 2.0
+            * np.pi
+            / 60.0
+        ) ** 2
+    )
+
+    max_total_thrust = (
+        4.0 * max_motor_thrust
+    )
+
+    controller = AltitudeController(
         kp=ALTITUDE_KP,
         ki=ALTITUDE_KI,
-        kd=ALTITUDE_KD,
-
-        output_min=0.0,
-        output_max=MAX_RPM
+        kv=ALTITUDE_KV,
+        mass=MASS,
+        gravity=GRAVITY,
+        max_thrust=max_total_thrust
     )
 
     # =========================================
-    # DATA STORAGE
+    # STORAGE
     # =========================================
 
-    steps = int(SIMULATION_TIME / DT)
+    steps = int(
+        SIMULATION_TIME / DT
+    )
 
     time = np.arange(steps) * DT
 
@@ -72,31 +122,30 @@ def run_simulation():
 
     thrust_history = np.zeros(steps)
 
-    rpm_history = np.zeros((steps, 4))
+    rpm_history = np.zeros(
+        (steps, 4)
+    )
 
     # =========================================
-    # SIMULATION LOOP
+    # LOOP
     # =========================================
 
     for i, t in enumerate(time):
 
         # -------------------------------------
-        # Desired altitude
+        # Mission profile
         # -------------------------------------
 
         if t < 2.0:
 
-            # Takeoff
             target_altitude = 2.0
 
         elif t < 7.0:
 
-            # Hover
             target_altitude = 2.0
 
         else:
 
-            # Landing
             target_altitude = 0.0
 
         target_history[i] = target_altitude
@@ -105,69 +154,48 @@ def run_simulation():
         # Controller
         # -------------------------------------
 
-        # PID output is additional thrust command
-        thrust_command = pid.update(
+        desired_total_thrust = controller.update(
             target_altitude,
             altitude,
+            vertical_velocity,
             DT
         )
 
         # -------------------------------------
-        # Add gravity compensation
+        # Equal thrust distribution
         # -------------------------------------
 
-        required_hover_thrust = MASS * GRAVITY
-
-        total_desired_thrust = (
-            required_hover_thrust
-            + thrust_command
+        desired_motor_thrust = (
+            desired_total_thrust / 4.0
         )
 
-        # -------------------------------------
-        # Convert total thrust to
-        # per-motor thrust
-        # -------------------------------------
-
-        motor_thrust = (
-            total_desired_thrust / 4.0
-        )
-
-        # Convert thrust to RPM
-        omega = np.sqrt(
-            max(motor_thrust, 0.0)
-            / 1.0e-5
-        )
-
-        commanded_rpm = (
-            omega * 60.0
-            / (2.0 * np.pi)
-        )
-
-        commanded_rpm = np.clip(
-            commanded_rpm,
-            0,
-            MAX_RPM
+        commanded_rpm = thrust_to_rpm(
+            desired_motor_thrust
         )
 
         # -------------------------------------
-        # Update motor dynamics
+        # Motor dynamics
         # -------------------------------------
 
         actual_rpms = []
 
         for motor in motors:
 
-            rpm = motor.update(
+            actual_rpm = motor.update(
                 commanded_rpm,
                 DT
             )
 
-            actual_rpms.append(rpm)
+            actual_rpms.append(
+                actual_rpm
+            )
 
-        actual_rpms = np.array(actual_rpms)
+        actual_rpms = np.array(
+            actual_rpms
+        )
 
         # -------------------------------------
-        # Calculate actual thrust
+        # Actual thrust
         # -------------------------------------
 
         actual_thrusts = np.array([
@@ -193,7 +221,7 @@ def run_simulation():
         )
 
         # -------------------------------------
-        # Integrate motion
+        # Integrate
         # -------------------------------------
 
         vertical_velocity += (
@@ -204,24 +232,35 @@ def run_simulation():
             vertical_velocity * DT
         )
 
-        # Prevent falling below ground
-        if altitude < 0:
+        # -------------------------------------
+        # Ground constraint
+        # -------------------------------------
 
-            altitude = 0
+        if altitude <= 0:
+
+            altitude = 0.0
 
             if vertical_velocity < 0:
-                vertical_velocity = 0
+
+                vertical_velocity = 0.0
 
         # -------------------------------------
-        # Store results
+        # Store
         # -------------------------------------
 
         altitude_history[i] = altitude
-        velocity_history[i] = vertical_velocity
 
-        thrust_history[i] = total_actual_thrust
+        velocity_history[i] = (
+            vertical_velocity
+        )
 
-        rpm_history[i, :] = actual_rpms
+        thrust_history[i] = (
+            total_actual_thrust
+        )
+
+        rpm_history[i, :] = (
+            actual_rpms
+        )
 
     return (
         time,
@@ -271,7 +310,7 @@ def plot_results(
     )
 
     axes[0].set_title(
-        "MorphoAqua - Stage 1B Closed-Loop Flight"
+        "MorphoAqua - Stage 1B"
     )
 
     axes[0].legend()
@@ -298,7 +337,8 @@ def plot_results(
 
     axes[2].plot(
         time,
-        thrust
+        thrust,
+        label="Actual thrust"
     )
 
     axes[2].axhline(
@@ -308,14 +348,14 @@ def plot_results(
     )
 
     axes[2].set_ylabel(
-        "Total thrust (N)"
+        "Thrust (N)"
     )
 
     axes[2].legend()
     axes[2].grid(True)
 
     # =========================================
-    # MOTOR RPM
+    # RPM
     # =========================================
 
     for i in range(4):
@@ -346,8 +386,10 @@ def main():
 
     print("=" * 60)
     print("MORPHOAQUA - STAGE 1B")
-    print("CLOSED-LOOP ALTITUDE CONTROL")
+    print("IMPROVED CLOSED-LOOP ALTITUDE CONTROL")
     print("=" * 60)
+
+    results = run_simulation()
 
     (
         time,
@@ -356,27 +398,32 @@ def main():
         target,
         thrust,
         rpm
-    ) = run_simulation()
+    ) = results
 
     print("\nSimulation complete.")
 
     print(
-        f"Maximum altitude: "
+        f"Maximum altitude : "
         f"{np.max(altitude):.3f} m"
     )
 
     print(
-        f"Final altitude: "
+        f"Final altitude   : "
         f"{altitude[-1]:.3f} m"
     )
 
     print(
-        f"Maximum velocity: "
+        f"Maximum velocity : "
         f"{np.max(np.abs(velocity)):.3f} m/s"
     )
 
     print(
-        f"Final motor RPM: "
+        f"Final velocity   : "
+        f"{velocity[-1]:.3f} m/s"
+    )
+
+    print(
+        f"Final motor RPM  : "
         f"{rpm[-1, 0]:.2f}"
     )
 

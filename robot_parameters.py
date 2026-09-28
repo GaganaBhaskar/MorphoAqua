@@ -71,7 +71,12 @@ MAX_TOTAL_THRUST = 4.0 * (
     KF * (MAX_RPM * 2.0 * np.pi / 60.0) ** 2
 )
 
-# PID gains
-ALTITUDE_KP = 8.0
-ALTITUDE_KI = 1.0
-ALTITUDE_KD = 5.0
+# =========================
+# ALTITUDE CONTROLLER
+# =========================
+
+TARGET_ALTITUDE = 2.0
+
+ALTITUDE_KP = 6.0
+ALTITUDE_KI = 0.5
+ALTITUDE_KV = 4.0

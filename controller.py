@@ -1,48 +1,95 @@
 """
 MorphoAqua - Stage 1B
-PID altitude controller
+Improved altitude controller
 """
 
-class PIDController:
+import numpy as np
 
-    def __init__(self, kp, ki, kd, output_min, output_max):
+
+class AltitudeController:
+
+    def __init__(
+        self,
+        kp,
+        ki,
+        kv,
+        mass,
+        gravity,
+        max_thrust
+    ):
 
         self.kp = kp
         self.ki = ki
-        self.kd = kd
+        self.kv = kv
 
-        self.output_min = output_min
-        self.output_max = output_max
+        self.mass = mass
+        self.gravity = gravity
+
+        self.max_thrust = max_thrust
 
         self.integral = 0.0
-        self.previous_error = 0.0
 
-    def update(self, target, measurement, dt):
+    def update(
+        self,
+        target_altitude,
+        altitude,
+        vertical_velocity,
+        dt
+    ):
 
-        error = target - measurement
+        # --------------------------------
+        # Position error
+        # --------------------------------
 
-        # Integral term
+        error = (
+            target_altitude
+            - altitude
+        )
+
+        # --------------------------------
+        # Integral
+        # --------------------------------
+
         self.integral += error * dt
 
-        # Derivative term
-        derivative = (
-            (error - self.previous_error) / dt
-            if dt > 0
-            else 0.0
+        # Anti-windup
+        self.integral = np.clip(
+            self.integral,
+            -2.0,
+            2.0
         )
 
-        output = (
+        # --------------------------------
+        # Gravity compensation
+        # --------------------------------
+
+        hover_thrust = (
+            self.mass * self.gravity
+        )
+
+        # --------------------------------
+        # Feedback control
+        # --------------------------------
+
+        correction = (
             self.kp * error
             + self.ki * self.integral
-            + self.kd * derivative
+            - self.kv * vertical_velocity
         )
 
-        # Prevent excessive controller output
-        output = max(
-            self.output_min,
-            min(self.output_max, output)
+        thrust = (
+            hover_thrust
+            + correction
         )
 
-        self.previous_error = error
+        # --------------------------------
+        # Thrust limits
+        # --------------------------------
 
-        return output
+        thrust = np.clip(
+            thrust,
+            0.0,
+            self.max_thrust
+        )
+
+        return thrust
