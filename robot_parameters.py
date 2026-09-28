@@ -76,7 +76,7 @@ INERTIA = np.diag([
 
 DT = 0.002
 
-SIMULATION_TIME = 12.0
+SIMULATION_TIME = 15.0
 
 
 # ============================================================
