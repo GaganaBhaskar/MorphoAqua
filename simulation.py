@@ -1,20 +1,17 @@
 """
-============================================================
-MorphoAqua - Stage 2A
-3-D Waypoint Navigation
-============================================================
+======================================================================
+MorphoAqua - Stage 2B
+Continuous 3-D Trajectory Tracking
+======================================================================
 
-Stage 2A extends the validated Stage 1C 6-DOF rigid-body
-simulation to 3-D waypoint navigation.
+Stage 2B extends the validated Stage 2A 6-DOF simulation from
+piecewise waypoint navigation to continuous 3-D trajectory tracking.
 
 Mission:
-P0 = (0, 0, 0)
-P1 = (0, 0, 2)
-P2 = (2, 0, 2)
-P3 = (2, 2, 2)
-P4 = (0, 2, 2)
-P5 = (0, 0, 2)
-P6 = (0, 0, 0)
+    1. Smooth takeoff from ground to 2 m.
+    2. Track a continuous closed 3-D loop.
+    3. Return smoothly to the origin at 2 m.
+    4. Smoothly descend and land.
 
 This is a numerical simulation only.
 """
@@ -23,6 +20,7 @@ import os
 
 import numpy as np
 import matplotlib.pyplot as plt
+
 
 from robot_parameters import (
     MASS,
@@ -33,22 +31,29 @@ from robot_parameters import (
     KM,
     MAX_RPM,
     DT,
+
     POSITION_KP_X,
     POSITION_KP_Y,
     POSITION_KP_Z,
+
     POSITION_KD_X,
     POSITION_KD_Y,
     POSITION_KD_Z,
+
     ATTITUDE_KP_ROLL,
     ATTITUDE_KP_PITCH,
     ATTITUDE_KP_YAW,
+
     ATTITUDE_KD_ROLL,
     ATTITUDE_KD_PITCH,
     ATTITUDE_KD_YAW,
+
     MAX_ROLL,
     MAX_PITCH,
+
     GROUND_ALTITUDE,
 )
+
 
 from controller import (
     PositionController,
@@ -56,22 +61,57 @@ from controller import (
     rotation_matrix,
 )
 
+
 from motor_model import (
     Motor,
     thrust_from_rpm,
 )
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
+# ======================================================================
+# STAGE 2B CONFIGURATION
+# ======================================================================
 
-STAGE2_SIMULATION_TIME = 20.0
-WAYPOINT_TIME = 3.0
+STAGE2B_SIMULATION_TIME = 20.0
+
+TAKEOFF_TIME = 3.0
+
+TRAJECTORY_START_TIME = 3.0
+
+TRAJECTORY_DURATION = 12.0
+
+LANDING_START_TIME = 15.0
+
+LANDING_DURATION = 3.0
+
+
+# Continuous trajectory parameters
+
+TRAJECTORY_CENTER_Z = 2.0
+
+TRAJECTORY_X_RADIUS = 1.5
+
+TRAJECTORY_Y_RADIUS = 0.9
+
+TRAJECTORY_Z_AMPLITUDE = 0.3
+
+
+TRAJECTORY_ANGULAR_FREQUENCY = (
+    2.0 * np.pi / TRAJECTORY_DURATION
+)
+
+
 TARGET_YAW = 0.0
 
+
+# Controller limits
+
 MAX_HORIZONTAL_ACCELERATION = 2.0
+
 MAX_VERTICAL_ACCELERATION = 2.5
+
+
+# Results directory
 
 RESULTS_DIRECTORY = "results"
 
@@ -81,37 +121,43 @@ os.makedirs(
 )
 
 
-# ============================================================
-# WAYPOINTS
-# ============================================================
+# ======================================================================
+# TRAJECTORY DESCRIPTION
+# ======================================================================
 
-WAYPOINTS = np.array(
-    [
-        [0.0, 0.0, 0.0],
-        [0.0, 0.0, 2.0],
-        [2.0, 0.0, 2.0],
-        [2.0, 2.0, 2.0],
-        [0.0, 2.0, 2.0],
-        [0.0, 0.0, 2.0],
-        [0.0, 0.0, 0.0],
-    ],
-    dtype=float,
-)
+"""
+The continuous trajectory is defined parametrically.
 
-WAYPOINT_NAMES = [
-    "P0",
-    "P1",
-    "P2",
-    "P3",
-    "P4",
-    "P5",
-    "P6",
-]
+During the tracking phase:
+
+    theta = 2*pi*u
+
+    X = A * (1 - cos(theta))
+
+    Y = B * sin(theta) * (1 - cos(theta))
+
+    Z = Z0 + C * (1 - cos(theta))
+
+where:
+
+    A = TRAJECTORY_X_RADIUS
+    B = TRAJECTORY_Y_RADIUS
+    C = TRAJECTORY_Z_AMPLITUDE
+
+The trajectory starts and ends at:
+
+    (0, 0, 2)
+
+with zero velocity at both ends.
+
+This gives smooth transition into and out of the
+continuous trajectory phase.
+"""
 
 
-# ============================================================
-# THRUST / RPM
-# ============================================================
+# ======================================================================
+# THRUST / RPM CONVERSION
+# ======================================================================
 
 def thrust_to_rpm(thrust):
 
@@ -149,9 +195,9 @@ def maximum_motor_thrust():
     return KF * omega_max**2
 
 
-# ============================================================
-# QUADROTOR MIXER
-# ============================================================
+# ======================================================================
+# QUADROTOR MOTOR MIXER
+# ======================================================================
 
 def calculate_motor_thrusts(
     total_thrust,
@@ -168,8 +214,11 @@ def calculate_motor_thrusts(
     mixer = np.array(
         [
             [1.0, 1.0, 1.0, 1.0],
+
             [arm, -arm, -arm, arm],
+
             [-arm, -arm, arm, arm],
+
             [KM, -KM, KM, -KM],
         ]
     )
@@ -259,6 +308,7 @@ def motor_mixer(
         ):
 
             best = candidate
+
             low = scale
 
         else:
@@ -272,9 +322,9 @@ def motor_mixer(
     )
 
 
-# ============================================================
+# ======================================================================
 # ACTUAL MOTOR TORQUES
-# ============================================================
+# ======================================================================
 
 def calculate_actual_torques(
     motor_thrusts,
@@ -324,9 +374,9 @@ def calculate_actual_torques(
     )
 
 
-# ============================================================
+# ======================================================================
 # QUINTIC SMOOTHSTEP
-# ============================================================
+# ======================================================================
 
 def smoothstep_profile(u):
 
@@ -357,96 +407,283 @@ def smoothstep_profile(u):
     return s, ds, d2s
 
 
-# ============================================================
-# REFERENCE TRAJECTORY
-# ============================================================
+# ======================================================================
+# CONTINUOUS 3-D TRAJECTORY
+# ======================================================================
 
-def reference_trajectory(t):
+def continuous_trajectory(t):
 
-    number_of_segments = (
-        len(WAYPOINTS) - 1
+    omega = (
+        TRAJECTORY_ANGULAR_FREQUENCY
     )
 
-    mission_duration = (
-        number_of_segments
-        * WAYPOINT_TIME
-    )
+    # --------------------------------------------------------------
+    # PHASE 1: TAKEOFF
+    # --------------------------------------------------------------
 
-    if t >= mission_duration:
+    if t < TAKEOFF_TIME:
 
-        return (
-            WAYPOINTS[-1].copy(),
-            np.zeros(3),
-            np.zeros(3),
-            number_of_segments - 1,
+        u = (
+            t
+            / TAKEOFF_TIME
         )
 
-    segment_index = int(
-        t / WAYPOINT_TIME
-    )
+        s, ds, d2s = (
+            smoothstep_profile(u)
+        )
 
-    segment_index = min(
-        segment_index,
-        number_of_segments - 1,
-    )
+        position = np.array(
+            [
+                0.0,
+                0.0,
+                TRAJECTORY_CENTER_Z * s,
+            ]
+        )
 
-    segment_start_time = (
-        segment_index
-        * WAYPOINT_TIME
-    )
+        velocity = np.array(
+            [
+                0.0,
+                0.0,
+                (
+                    TRAJECTORY_CENTER_Z
+                    * ds
+                    / TAKEOFF_TIME
+                ),
+            ]
+        )
+
+        acceleration = np.array(
+            [
+                0.0,
+                0.0,
+                (
+                    TRAJECTORY_CENTER_Z
+                    * d2s
+                    / TAKEOFF_TIME**2
+                ),
+            ]
+        )
+
+        return (
+            position,
+            velocity,
+            acceleration,
+        )
+
+
+    # --------------------------------------------------------------
+    # PHASE 2: CONTINUOUS 3-D LOOP
+    # --------------------------------------------------------------
+
+    if t < LANDING_START_TIME:
+
+        local_time = (
+            t
+            - TRAJECTORY_START_TIME
+        )
+
+        u = (
+            local_time
+            / TRAJECTORY_DURATION
+        )
+
+        u = np.clip(
+            u,
+            0.0,
+            1.0,
+        )
+
+        theta = (
+            2.0
+            * np.pi
+            * u
+        )
+
+        sin_theta = np.sin(theta)
+
+        cos_theta = np.cos(theta)
+
+        sin_2theta = np.sin(
+            2.0 * theta
+        )
+
+        cos_2theta = np.cos(
+            2.0 * theta
+        )
+
+        # ----------------------------------------------------------
+        # Position
+        # ----------------------------------------------------------
+
+        x = (
+            TRAJECTORY_X_RADIUS
+            * (
+                1.0
+                - cos_theta
+            )
+        )
+
+        y = (
+            TRAJECTORY_Y_RADIUS
+            * sin_theta
+            * (
+                1.0
+                - cos_theta
+            )
+        )
+
+        z = (
+            TRAJECTORY_CENTER_Z
+            + TRAJECTORY_Z_AMPLITUDE
+            * (
+                1.0
+                - cos_theta
+            )
+        )
+
+        position = np.array(
+            [
+                x,
+                y,
+                z,
+            ]
+        )
+
+
+        # ----------------------------------------------------------
+        # First derivatives with respect to theta
+        # ----------------------------------------------------------
+
+        dx_dtheta = (
+            TRAJECTORY_X_RADIUS
+            * sin_theta
+        )
+
+        dy_dtheta = (
+            TRAJECTORY_Y_RADIUS
+            * (
+                cos_theta
+                - cos_2theta
+            )
+        )
+
+        dz_dtheta = (
+            TRAJECTORY_Z_AMPLITUDE
+            * sin_theta
+        )
+
+
+        # ----------------------------------------------------------
+        # Second derivatives with respect to theta
+        # ----------------------------------------------------------
+
+        d2x_dtheta2 = (
+            TRAJECTORY_X_RADIUS
+            * cos_theta
+        )
+
+        d2y_dtheta2 = (
+            TRAJECTORY_Y_RADIUS
+            * (
+                -sin_theta
+                + 2.0 * sin_2theta
+            )
+        )
+
+        d2z_dtheta2 = (
+            TRAJECTORY_Z_AMPLITUDE
+            * cos_theta
+        )
+
+
+        # ----------------------------------------------------------
+        # Convert theta derivatives to time derivatives
+        # ----------------------------------------------------------
+
+        velocity = np.array(
+            [
+                dx_dtheta * omega,
+                dy_dtheta * omega,
+                dz_dtheta * omega,
+            ]
+        )
+
+        acceleration = np.array(
+            [
+                d2x_dtheta2 * omega**2,
+                d2y_dtheta2 * omega**2,
+                d2z_dtheta2 * omega**2,
+            ]
+        )
+
+        return (
+            position,
+            velocity,
+            acceleration,
+        )
+
+
+    # --------------------------------------------------------------
+    # PHASE 3: LANDING
+    # --------------------------------------------------------------
 
     local_time = (
         t
-        - segment_start_time
+        - LANDING_START_TIME
     )
 
     u = (
         local_time
-        / WAYPOINT_TIME
+        / LANDING_DURATION
     )
-
-    start = WAYPOINTS[
-        segment_index
-    ]
-
-    end = WAYPOINTS[
-        segment_index + 1
-    ]
-
-    delta = end - start
 
     s, ds, d2s = (
         smoothstep_profile(u)
     )
 
-    position = (
-        start
-        + delta * s
+    position = np.array(
+        [
+            0.0,
+            0.0,
+            TRAJECTORY_CENTER_Z
+            * (1.0 - s),
+        ]
     )
 
-    velocity = (
-        delta
-        * ds
-        / WAYPOINT_TIME
+    velocity = np.array(
+        [
+            0.0,
+            0.0,
+            -(
+                TRAJECTORY_CENTER_Z
+                * ds
+                / LANDING_DURATION
+            ),
+        ]
     )
 
-    acceleration = (
-        delta
-        * d2s
-        / WAYPOINT_TIME**2
+    acceleration = np.array(
+        [
+            0.0,
+            0.0,
+            -(
+                TRAJECTORY_CENTER_Z
+                * d2s
+                / LANDING_DURATION**2
+            ),
+        ]
     )
 
     return (
         position,
         velocity,
         acceleration,
-        segment_index,
     )
 
 
-# ============================================================
+# ======================================================================
 # SIMULATION
-# ============================================================
+# ======================================================================
 
 def run_simulation():
 
@@ -470,12 +707,14 @@ def run_simulation():
         dtype=float,
     )
 
+
     motors = [
         Motor(),
         Motor(),
         Motor(),
         Motor(),
     ]
+
 
     position_controller = PositionController(
 
@@ -502,14 +741,17 @@ def run_simulation():
         ),
     )
 
+
     maximum_thrust = (
         maximum_motor_thrust()
     )
+
 
     arm = (
         ARM_LENGTH
         / np.sqrt(2.0)
     )
+
 
     maximum_roll_torque = (
         2.0
@@ -517,17 +759,20 @@ def run_simulation():
         * maximum_thrust
     )
 
+
     maximum_pitch_torque = (
         2.0
         * arm
         * maximum_thrust
     )
 
+
     maximum_yaw_torque = (
         2.0
         * KM
         * maximum_thrust
     )
+
 
     attitude_controller = AttitudeController(
 
@@ -544,15 +789,18 @@ def run_simulation():
         max_yaw_torque=maximum_yaw_torque,
     )
 
+
     steps = int(
-        STAGE2_SIMULATION_TIME
+        STAGE2B_SIMULATION_TIME
         / DT
     )
+
 
     time = (
         np.arange(steps)
         * DT
     )
+
 
     position_history = np.zeros(
         (steps, 3)
@@ -598,14 +846,19 @@ def run_simulation():
         (steps, 4)
     )
 
+
+    # ==================================================================
+    # MAIN SIMULATION LOOP
+    # ==================================================================
+
     for i, t in enumerate(time):
 
         (
             target_position,
             target_velocity,
             target_acceleration,
-            _,
-        ) = reference_trajectory(t)
+        ) = continuous_trajectory(t)
+
 
         target_position_history[i] = (
             target_position
@@ -618,6 +871,11 @@ def run_simulation():
         target_acceleration_history[i] = (
             target_acceleration
         )
+
+
+        # --------------------------------------------------------------
+        # Position controller
+        # --------------------------------------------------------------
 
         (
             _controller_thrust,
@@ -636,6 +894,7 @@ def run_simulation():
             target_acceleration,
         )
 
+
         desired_angles = np.array(
             [
                 desired_roll,
@@ -644,9 +903,15 @@ def run_simulation():
             ]
         )
 
+
         desired_angle_history[i] = (
             desired_angles
         )
+
+
+        # --------------------------------------------------------------
+        # Attitude controller
+        # --------------------------------------------------------------
 
         torque_command = (
             attitude_controller.update(
@@ -657,9 +922,10 @@ def run_simulation():
             )
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Position errors
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         position_error = (
             target_position
@@ -671,9 +937,10 @@ def run_simulation():
             - velocity
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Vertical control
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         vertical_acceleration = (
 
@@ -684,8 +951,8 @@ def run_simulation():
 
             + POSITION_KD_Z
             * velocity_error[2]
-
         )
+
 
         vertical_acceleration = np.clip(
 
@@ -694,8 +961,8 @@ def run_simulation():
             -MAX_VERTICAL_ACCELERATION,
 
             MAX_VERTICAL_ACCELERATION,
-
         )
+
 
         desired_vertical_force = (
             MASS
@@ -705,37 +972,40 @@ def run_simulation():
             )
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Current attitude
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         R = rotation_matrix(
 
             angles[0],
             angles[1],
             angles[2],
-
         )
+
 
         vertical_thrust_factor = (
             R[2, 2]
         )
+
 
         vertical_thrust_factor = max(
             vertical_thrust_factor,
             0.50,
         )
 
+
         required_total_thrust = (
 
             desired_vertical_force
             / vertical_thrust_factor
-
         )
 
-        # ----------------------------------------------------
-        # Horizontal acceleration
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
+        # Horizontal control
+        # --------------------------------------------------------------
 
         horizontal_acceleration = (
 
@@ -756,14 +1026,15 @@ def run_simulation():
                 ]
             )
             * velocity_error[:2]
-
         )
+
 
         horizontal_magnitude = (
             np.linalg.norm(
                 horizontal_acceleration
             )
         )
+
 
         if (
             horizontal_magnitude
@@ -774,8 +1045,8 @@ def run_simulation():
 
                 MAX_HORIZONTAL_ACCELERATION
                 / horizontal_magnitude
-
             )
+
 
         horizontal_force = (
             MASS
@@ -784,12 +1055,15 @@ def run_simulation():
             )
         )
 
+
+        # Combine vertical and horizontal force requirements.
+
         required_total_thrust = np.sqrt(
 
             required_total_thrust**2
             + horizontal_force**2
-
         )
+
 
         required_total_thrust = np.clip(
 
@@ -798,12 +1072,12 @@ def run_simulation():
             0.0,
 
             4.0 * maximum_thrust,
-
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Motor mixing
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         commanded_motor_thrusts = (
             motor_mixer(
@@ -813,9 +1087,9 @@ def run_simulation():
                 torque_command[0],
                 torque_command[1],
                 torque_command[2],
-
             )
         )
+
 
         commanded_rpms = np.array(
 
@@ -827,14 +1101,15 @@ def run_simulation():
                 for thrust
                 in commanded_motor_thrusts
             ]
-
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Motor dynamics
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         actual_rpms = np.zeros(4)
+
 
         for motor_index in range(4):
 
@@ -845,10 +1120,9 @@ def run_simulation():
                     commanded_rpms[motor_index],
 
                     DT,
-
                 )
-
             )
+
 
         actual_motor_thrusts = np.array(
 
@@ -860,8 +1134,8 @@ def run_simulation():
                 for rpm
                 in actual_rpms
             ]
-
         )
+
 
         actual_total_thrust = (
             np.sum(
@@ -869,23 +1143,25 @@ def run_simulation():
             )
         )
 
+
         actual_torque = (
             calculate_actual_torques(
                 actual_motor_thrusts
             )
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Translational dynamics
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         R = rotation_matrix(
 
             angles[0],
             angles[1],
             angles[2],
-
         )
+
 
         thrust_body = np.array(
             [
@@ -895,10 +1171,12 @@ def run_simulation():
             ]
         )
 
+
         thrust_world = (
             R
             @ thrust_body
         )
+
 
         gravity_force = np.array(
             [
@@ -908,29 +1186,34 @@ def run_simulation():
             ]
         )
 
+
         total_force = (
             thrust_world
             + gravity_force
         )
+
 
         acceleration = (
             total_force
             / MASS
         )
 
+
         velocity += (
             acceleration
             * DT
         )
+
 
         position += (
             velocity
             * DT
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Ground constraint
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         if position[2] <= GROUND_ALTITUDE:
 
@@ -939,16 +1222,19 @@ def run_simulation():
             )
 
             if velocity[2] < 0.0:
+
                 velocity[2] = 0.0
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Rotational dynamics
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         angular_momentum = (
             INERTIA
             @ angular_rates
         )
+
 
         angular_acceleration = np.linalg.solve(
 
@@ -960,32 +1246,39 @@ def run_simulation():
                 angular_rates,
                 angular_momentum,
             ),
-
         )
+
 
         angular_rates += (
             angular_acceleration
             * DT
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Euler-angle kinematics
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         phi = angles[0]
+
         theta = angles[1]
+
 
         cos_theta = np.cos(
             theta
         )
 
+
         if abs(cos_theta) < 1e-5:
+
             cos_theta = 1e-5
+
 
         tan_theta = (
             np.sin(theta)
             / cos_theta
         )
+
 
         euler_rate_matrix = np.array(
 
@@ -994,7 +1287,6 @@ def run_simulation():
                     1.0,
                     np.sin(phi)
                     * tan_theta,
-
                     np.cos(phi)
                     * tan_theta,
                 ],
@@ -1002,32 +1294,31 @@ def run_simulation():
                 [
                     0.0,
                     np.cos(phi),
-
                     -np.sin(phi),
                 ],
 
                 [
                     0.0,
-
                     np.sin(phi)
                     / cos_theta,
-
                     np.cos(phi)
                     / cos_theta,
                 ],
             ]
-
         )
+
 
         angle_rates = (
             euler_rate_matrix
             @ angular_rates
         )
 
+
         angles += (
             angle_rates
             * DT
         )
+
 
         angles[2] = np.arctan2(
 
@@ -1038,12 +1329,12 @@ def run_simulation():
             np.cos(
                 angles[2]
             ),
-
         )
 
-        # ----------------------------------------------------
+
+        # --------------------------------------------------------------
         # Store results
-        # ----------------------------------------------------
+        # --------------------------------------------------------------
 
         position_history[i] = (
             position
@@ -1073,27 +1364,38 @@ def run_simulation():
             actual_rpms
         )
 
+
     return (
 
         time,
-        position_history,
-        velocity_history,
-        angle_history,
-        angular_rate_history,
-        target_position_history,
-        target_velocity_history,
-        target_acceleration_history,
-        thrust_history,
-        torque_history,
-        rpm_history,
-        desired_angle_history,
 
+        position_history,
+
+        velocity_history,
+
+        angle_history,
+
+        angular_rate_history,
+
+        target_position_history,
+
+        target_velocity_history,
+
+        target_acceleration_history,
+
+        thrust_history,
+
+        torque_history,
+
+        rpm_history,
+
+        desired_angle_history,
     )
 
 
-# ============================================================
+# ======================================================================
 # METRICS
-# ============================================================
+# ======================================================================
 
 def calculate_metrics(
     position,
@@ -1107,20 +1409,24 @@ def calculate_metrics(
         - position
     )
 
+
     error_magnitude = np.linalg.norm(
         position_error,
         axis=1,
     )
+
 
     horizontal_error = np.linalg.norm(
         position_error[:, :2],
         axis=1,
     )
 
+
     speed = np.linalg.norm(
         velocity,
         axis=1,
     )
+
 
     roll_deg = np.rad2deg(
         angles[:, 0]
@@ -1134,6 +1440,7 @@ def calculate_metrics(
         angles[:, 2]
     )
 
+
     final_position = (
         position[-1]
     )
@@ -1146,43 +1453,44 @@ def calculate_metrics(
         angles[-1]
     )
 
+
     return {
 
-        "Maximum 3-D position error (m)":
+        "Maximum 3-D tracking error (m)":
             np.max(error_magnitude),
 
-        "RMS 3-D position error (m)":
+        "RMS 3-D tracking error (m)":
             np.sqrt(
                 np.mean(
                     error_magnitude**2
                 )
             ),
 
-        "Maximum horizontal error (m)":
+        "Maximum horizontal tracking error (m)":
             np.max(horizontal_error),
 
-        "RMS horizontal error (m)":
+        "RMS horizontal tracking error (m)":
             np.sqrt(
                 np.mean(
                     horizontal_error**2
                 )
             ),
 
-        "Maximum X error (m)":
+        "Maximum X tracking error (m)":
             np.max(
                 np.abs(
                     position_error[:, 0]
                 )
             ),
 
-        "Maximum Y error (m)":
+        "Maximum Y tracking error (m)":
             np.max(
                 np.abs(
                     position_error[:, 1]
                 )
             ),
 
-        "Maximum Z error (m)":
+        "Maximum Z tracking error (m)":
             np.max(
                 np.abs(
                     position_error[:, 2]
@@ -1206,17 +1514,23 @@ def calculate_metrics(
 
         "Maximum roll (deg)":
             np.max(
-                np.abs(roll_deg)
+                np.abs(
+                    roll_deg
+                )
             ),
 
         "Maximum pitch (deg)":
             np.max(
-                np.abs(pitch_deg)
+                np.abs(
+                    pitch_deg
+                )
             ),
 
         "Maximum yaw (deg)":
             np.max(
-                np.abs(yaw_deg)
+                np.abs(
+                    yaw_deg
+                )
             ),
 
         "Final position error (m)":
@@ -1256,13 +1570,12 @@ def calculate_metrics(
             np.rad2deg(
                 final_angles[2]
             ),
-
     }
 
 
-# ============================================================
+# ======================================================================
 # POSITION RESULTS
-# ============================================================
+# ======================================================================
 
 def plot_position_results(
     time,
@@ -1276,6 +1589,7 @@ def plot_position_results(
         figsize=(13, 11),
         sharex=True,
     )
+
 
     axes[0].plot(
         time,
@@ -1295,7 +1609,9 @@ def plot_position_results(
     )
 
     axes[0].grid(True)
+
     axes[0].legend()
+
 
     axes[1].plot(
         time,
@@ -1315,7 +1631,9 @@ def plot_position_results(
     )
 
     axes[1].grid(True)
+
     axes[1].legend()
+
 
     axes[2].plot(
         time,
@@ -1339,19 +1657,24 @@ def plot_position_results(
     )
 
     axes[2].grid(True)
+
     axes[2].legend()
 
+
     fig.suptitle(
-        "MorphoAqua - Stage 2A "
-        "3-D Waypoint Navigation"
+        "MorphoAqua - Stage 2B "
+        "Continuous 3-D Trajectory Tracking"
     )
+
 
     plt.tight_layout()
 
+
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_2A_3D_waypoint_navigation.png",
+        "Stage_2B_position_tracking.png",
     )
+
 
     plt.savefig(
         output_path,
@@ -1359,12 +1682,15 @@ def plot_position_results(
         bbox_inches="tight",
     )
 
+
     plt.show()
 
+    plt.close(fig)
 
-# ============================================================
-# 3-D TRAJECTORY
-# ============================================================
+
+# ======================================================================
+# 3-D TRAJECTORY PLOT
+# ======================================================================
 
 def plot_3d_trajectory(
     position,
@@ -1375,10 +1701,12 @@ def plot_3d_trajectory(
         figsize=(12, 10)
     )
 
+
     ax = fig.add_subplot(
         111,
         projection="3d",
     )
+
 
     ax.plot(
         position[:, 0],
@@ -1386,6 +1714,7 @@ def plot_3d_trajectory(
         position[:, 2],
         label="Actual trajectory",
     )
+
 
     ax.plot(
         target[:, 0],
@@ -1395,24 +1724,15 @@ def plot_3d_trajectory(
         label="Target trajectory",
     )
 
+
     ax.scatter(
-        WAYPOINTS[:, 0],
-        WAYPOINTS[:, 1],
-        WAYPOINTS[:, 2],
-        s=50,
-        label="Waypoints",
+        [0.0],
+        [0.0],
+        [0.0],
+        s=60,
+        label="Start / Landing",
     )
 
-    for i, waypoint in enumerate(
-        WAYPOINTS
-    ):
-
-        ax.text(
-            waypoint[0],
-            waypoint[1],
-            waypoint[2],
-            WAYPOINT_NAMES[i],
-        )
 
     ax.set_xlabel(
         "X (m)"
@@ -1426,20 +1746,26 @@ def plot_3d_trajectory(
         "Z (m)"
     )
 
+
     ax.set_title(
-        "MorphoAqua - Stage 2A "
-        "3-D Waypoint Trajectory"
+        "MorphoAqua - Stage 2B "
+        "Continuous 3-D Trajectory"
     )
 
+
     ax.legend()
+
     ax.grid(True)
+
 
     plt.tight_layout()
 
+
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_2A_3D_trajectory.png",
+        "Stage_2B_3D_trajectory.png",
     )
+
 
     plt.savefig(
         output_path,
@@ -1447,12 +1773,15 @@ def plot_3d_trajectory(
         bbox_inches="tight",
     )
 
+
     plt.show()
 
+    plt.close(fig)
 
-# ============================================================
+
+# ======================================================================
 # CONTROL RESPONSE
-# ============================================================
+# ======================================================================
 
 def plot_control_results(
     time,
@@ -1471,9 +1800,10 @@ def plot_control_results(
         sharex=True,
     )
 
-    # --------------------------------------------------------
+
+    # --------------------------------------------------------------
     # Velocity
-    # --------------------------------------------------------
+    # --------------------------------------------------------------
 
     axes[0].plot(
         time,
@@ -1498,11 +1828,13 @@ def plot_control_results(
     )
 
     axes[0].legend()
+
     axes[0].grid(True)
 
-    # --------------------------------------------------------
+
+    # --------------------------------------------------------------
     # Attitude
-    # --------------------------------------------------------
+    # --------------------------------------------------------------
 
     axes[1].plot(
         time,
@@ -1538,16 +1870,26 @@ def plot_control_results(
         label="Desired Pitch",
     )
 
+    axes[1].plot(
+        time,
+        np.rad2deg(
+            angles[:, 2]
+        ),
+        label="Yaw",
+    )
+
     axes[1].set_ylabel(
         "Angle (deg)"
     )
 
     axes[1].legend()
+
     axes[1].grid(True)
 
-    # --------------------------------------------------------
+
+    # --------------------------------------------------------------
     # Thrust
-    # --------------------------------------------------------
+    # --------------------------------------------------------------
 
     axes[2].plot(
         time,
@@ -1555,10 +1897,6 @@ def plot_control_results(
         label="Total thrust",
     )
 
-    # IMPORTANT:
-    # linestyle must be supplied by keyword.
-    # Passing "--" as the second positional argument to
-    # axhline() causes Matplotlib to interpret it as xmin.
     axes[2].axhline(
         MASS * GRAVITY,
         linestyle="--",
@@ -1570,11 +1908,13 @@ def plot_control_results(
     )
 
     axes[2].legend()
+
     axes[2].grid(True)
 
-    # --------------------------------------------------------
+
+    # --------------------------------------------------------------
     # Torque
-    # --------------------------------------------------------
+    # --------------------------------------------------------------
 
     axes[3].plot(
         time,
@@ -1599,11 +1939,13 @@ def plot_control_results(
     )
 
     axes[3].legend()
+
     axes[3].grid(True)
 
-    # --------------------------------------------------------
+
+    # --------------------------------------------------------------
     # RPM
-    # --------------------------------------------------------
+    # --------------------------------------------------------------
 
     for motor_index in range(4):
 
@@ -1615,6 +1957,7 @@ def plot_control_results(
             ),
         )
 
+
     axes[4].set_ylabel(
         "RPM"
     )
@@ -1624,19 +1967,24 @@ def plot_control_results(
     )
 
     axes[4].legend()
+
     axes[4].grid(True)
 
+
     fig.suptitle(
-        "MorphoAqua - Stage 2A "
+        "MorphoAqua - Stage 2B "
         "Control and Actuator Response"
     )
 
+
     plt.tight_layout()
+
 
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_2A_control_response.png",
+        "Stage_2B_control_response.png",
     )
+
 
     plt.savefig(
         output_path,
@@ -1644,55 +1992,70 @@ def plot_control_results(
         bbox_inches="tight",
     )
 
+
     plt.show()
 
+    plt.close(fig)
 
-# ============================================================
+
+# ======================================================================
 # MAIN
-# ============================================================
+# ======================================================================
 
 def main():
 
     print("=" * 70)
 
     print(
-        "MORPHOAQUA - STAGE 2A"
+        "MORPHOAQUA - STAGE 2B"
     )
 
     print(
-        "3-D WAYPOINT NAVIGATION"
+        "CONTINUOUS 3-D TRAJECTORY TRACKING"
     )
 
     print("=" * 70)
 
     print()
 
+
     print(
-        "Mission waypoints:"
+        "Mission:"
     )
 
-    for name, waypoint in zip(
-        WAYPOINT_NAMES,
-        WAYPOINTS,
-    ):
+    print(
+        "P0 = (0.00, 0.00, 0.00)"
+    )
 
-        print(
-            f"{name} = "
-            f"({waypoint[0]:.2f}, "
-            f"{waypoint[1]:.2f}, "
-            f"{waypoint[2]:.2f})"
-        )
+    print(
+        "Smooth takeoff to Z = 2.00 m"
+    )
+
+    print(
+        "Continuous closed 3-D loop"
+    )
+
+    print(
+        "Smooth return to (0.00, 0.00, 2.00)"
+    )
+
+    print(
+        "Smooth landing to Z = 0.00 m"
+    )
 
     print()
+
 
     print(
         f"Simulation time: "
-        f"{STAGE2_SIMULATION_TIME:.1f} s"
+        f"{STAGE2B_SIMULATION_TIME:.1f} s"
     )
 
     print()
 
+
     results = run_simulation()
+
 
     (
         time,
@@ -1709,6 +2072,7 @@ def main():
         desired_angles,
     ) = results
 
+
     metrics = calculate_metrics(
         position,
         velocity,
@@ -1716,15 +2080,18 @@ def main():
         target_position,
     )
 
+
     print()
 
     print(
-        "3-D TRAJECTORY PERFORMANCE METRICS"
+        "CONTINUOUS 3-D TRAJECTORY "
+        "PERFORMANCE METRICS"
     )
 
     print(
         "-" * 70
     )
+
 
     for name, value in metrics.items():
 
@@ -1733,11 +2100,13 @@ def main():
             f"{value:.6f}"
         )
 
+
     print(
         "-" * 70
     )
 
     print()
+
 
     print(
         "Controller configuration:"
@@ -1757,7 +2126,12 @@ def main():
     )
 
     print(
-        "Trajectory profile: Quintic smoothstep"
+        "Trajectory: Continuous closed 3-D loop"
+    )
+
+    print(
+        "Trajectory derivatives: "
+        "Analytical position, velocity and acceleration"
     )
 
     print(
@@ -1772,11 +2146,13 @@ def main():
 
     print()
 
+
     print(
-        "Stage 2A simulation completed."
+        "Stage 2B simulation completed."
     )
 
     print()
+
 
     print(
         "Results saved to:"
@@ -1785,23 +2161,24 @@ def main():
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_2A_3D_waypoint_navigation.png",
+            "Stage_2B_position_tracking.png",
         )
     )
 
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_2A_3D_trajectory.png",
+            "Stage_2B_3D_trajectory.png",
         )
     )
 
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_2A_control_response.png",
+            "Stage_2B_control_response.png",
         )
     )
+
 
     plot_position_results(
         time,
@@ -1809,10 +2186,12 @@ def main():
         target_position,
     )
 
+
     plot_3d_trajectory(
         position,
         target_position,
     )
+
 
     plot_control_results(
         time,
@@ -1825,9 +2204,10 @@ def main():
     )
 
 
-# ============================================================
+# ======================================================================
 # ENTRY POINT
-# ============================================================
+# ======================================================================
 
 if __name__ == "__main__":
+
     main()
