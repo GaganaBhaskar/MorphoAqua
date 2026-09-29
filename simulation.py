@@ -1,19 +1,29 @@
 """
 ======================================================================
-MorphoAqua - Stage 2B
-Continuous 3-D Trajectory Tracking
+MorphoAqua - Stage 3A
+In-Flight Morphing Dynamics
 ======================================================================
 
-Stage 2B extends the validated Stage 2A 6-DOF simulation from
-piecewise waypoint navigation to continuous 3-D trajectory tracking.
+Stage 3A extends the validated Stage 2B 6-DOF simulation by introducing
+a prescribed, smooth change in vehicle morphology during flight.
 
-Mission:
-    1. Smooth takeoff from ground to 2 m.
-    2. Track a continuous closed 3-D loop.
-    3. Return smoothly to the origin at 2 m.
-    4. Smoothly descend and land.
+The vehicle continuously changes arm length while simultaneously
+tracking the Stage 2B continuous 3-D trajectory.
 
-This is a numerical simulation only.
+Morphology model:
+    - Compact configuration: 0.80 x nominal arm length
+    - Extended configuration: 1.20 x nominal arm length
+    - Smooth quintic morphing transitions
+    - Rotational inertia is parameterized as proportional to arm_length^2
+
+The changing arm length directly affects:
+    1. Quadrotor motor mixing
+    2. Available roll/pitch torque
+    3. Actual motor-generated torque
+    4. Rigid-body rotational dynamics through time-varying inertia
+
+This is a numerical simulation only. The morphology and inertia
+relationship is a parameterized model, not an experimental measurement.
 """
 
 import os
@@ -69,10 +79,10 @@ from motor_model import (
 
 
 # ======================================================================
-# STAGE 2B CONFIGURATION
+# STAGE 3A CONFIGURATION
 # ======================================================================
 
-STAGE2B_SIMULATION_TIME = 20.0
+STAGE3A_SIMULATION_TIME = 20.0
 
 TAKEOFF_TIME = 3.0
 
@@ -85,7 +95,31 @@ LANDING_START_TIME = 15.0
 LANDING_DURATION = 3.0
 
 
+# ----------------------------------------------------------------------
+# Morphing schedule
+# ----------------------------------------------------------------------
+
+MORPHING_START_TIME = 3.0
+
+MORPHING_OUT_DURATION = 3.0
+
+EXTENDED_HOLD_START_TIME = 6.0
+
+EXTENDED_HOLD_END_TIME = 9.0
+
+MORPHING_IN_DURATION = 3.0
+
+COMPACT_HOLD_END_TIME = 15.0
+
+
+COMPACT_ARM_RATIO = 0.80
+
+EXTENDED_ARM_RATIO = 1.20
+
+
+# ----------------------------------------------------------------------
 # Continuous trajectory parameters
+# ----------------------------------------------------------------------
 
 TRAJECTORY_CENTER_Z = 2.0
 
@@ -104,14 +138,18 @@ TRAJECTORY_ANGULAR_FREQUENCY = (
 TARGET_YAW = 0.0
 
 
+# ----------------------------------------------------------------------
 # Controller limits
+# ----------------------------------------------------------------------
 
 MAX_HORIZONTAL_ACCELERATION = 2.0
 
 MAX_VERTICAL_ACCELERATION = 2.5
 
 
+# ----------------------------------------------------------------------
 # Results directory
+# ----------------------------------------------------------------------
 
 RESULTS_DIRECTORY = "results"
 
@@ -204,10 +242,11 @@ def calculate_motor_thrusts(
     roll_torque,
     pitch_torque,
     yaw_torque,
+    arm_length,
 ):
 
     arm = (
-        ARM_LENGTH
+        arm_length
         / np.sqrt(2.0)
     )
 
@@ -243,6 +282,7 @@ def motor_mixer(
     roll_torque,
     pitch_torque,
     yaw_torque,
+    arm_length,
 ):
 
     maximum_thrust = (
@@ -271,6 +311,7 @@ def motor_mixer(
         torque[0],
         torque[1],
         torque[2],
+        arm_length,
     )
 
     if (
@@ -287,6 +328,7 @@ def motor_mixer(
         0.0,
         0.0,
         0.0,
+        arm_length,
     )
 
     for _ in range(30):
@@ -300,6 +342,7 @@ def motor_mixer(
             torque[0] * scale,
             torque[1] * scale,
             torque[2] * scale,
+            arm_length,
         )
 
         if (
@@ -308,7 +351,6 @@ def motor_mixer(
         ):
 
             best = candidate
-
             low = scale
 
         else:
@@ -328,10 +370,11 @@ def motor_mixer(
 
 def calculate_actual_torques(
     motor_thrusts,
+    arm_length,
 ):
 
     arm = (
-        ARM_LENGTH
+        arm_length
         / np.sqrt(2.0)
     )
 
@@ -405,6 +448,108 @@ def smoothstep_profile(u):
     )
 
     return s, ds, d2s
+
+
+# ======================================================================
+# MORPHOLOGY MODEL
+# ======================================================================
+
+def morphology_profile(t):
+    """
+    Return the normalized morphology state.
+
+    morphing_state:
+        0.0 -> compact
+        1.0 -> extended
+
+    The transitions use the same quintic smoothstep profile used by
+    the flight trajectory, giving zero first and second derivatives
+    at the endpoints.
+    """
+
+    if t < MORPHING_START_TIME:
+
+        return 0.0
+
+    if t < (
+        MORPHING_START_TIME
+        + MORPHING_OUT_DURATION
+    ):
+
+        u = (
+            t - MORPHING_START_TIME
+        ) / MORPHING_OUT_DURATION
+
+        s, _, _ = smoothstep_profile(u)
+
+        return float(s)
+
+    if t < EXTENDED_HOLD_END_TIME:
+
+        return 1.0
+
+    if t < (
+        EXTENDED_HOLD_END_TIME
+        + MORPHING_IN_DURATION
+    ):
+
+        u = (
+            t - EXTENDED_HOLD_END_TIME
+        ) / MORPHING_IN_DURATION
+
+        s, _, _ = smoothstep_profile(u)
+
+        return float(1.0 - s)
+
+    return 0.0
+
+
+def morphology_parameters(t):
+    """
+    Return current arm length and parameterized inertia.
+
+    Arm length changes linearly with the normalized morphology state.
+
+    The inertia model assumes the dominant morphology-dependent
+    contribution scales with the square of the radial distance:
+
+        I(t) = I_nominal * (L(t) / L_nominal)^2
+
+    This is a parameterized numerical model, not a measured
+    mass-property model.
+    """
+
+    morphing_state = morphology_profile(t)
+
+    arm_ratio = (
+        COMPACT_ARM_RATIO
+        + morphing_state
+        * (
+            EXTENDED_ARM_RATIO
+            - COMPACT_ARM_RATIO
+        )
+    )
+
+    current_arm_length = (
+        ARM_LENGTH
+        * arm_ratio
+    )
+
+    inertia_scale = (
+        arm_ratio**2
+    )
+
+    current_inertia = (
+        INERTIA
+        * inertia_scale
+    )
+
+    return (
+        morphing_state,
+        current_arm_length,
+        current_inertia,
+        inertia_scale,
+    )
 
 
 # ======================================================================
@@ -707,14 +852,12 @@ def run_simulation():
         dtype=float,
     )
 
-
     motors = [
         Motor(),
         Motor(),
         Motor(),
         Motor(),
     ]
-
 
     position_controller = PositionController(
 
@@ -741,38 +884,41 @@ def run_simulation():
         ),
     )
 
-
     maximum_thrust = (
         maximum_motor_thrust()
     )
 
-
-    arm = (
+    # The attitude controller is given the maximum torque
+    # capability over the full morphology range. The dynamic
+    # mixer subsequently enforces the actual torque capability
+    # at the current arm length.
+    maximum_arm_length = (
         ARM_LENGTH
+        * EXTENDED_ARM_RATIO
+    )
+
+    maximum_arm = (
+        maximum_arm_length
         / np.sqrt(2.0)
     )
 
-
     maximum_roll_torque = (
         2.0
-        * arm
+        * maximum_arm
         * maximum_thrust
     )
-
 
     maximum_pitch_torque = (
         2.0
-        * arm
+        * maximum_arm
         * maximum_thrust
     )
-
 
     maximum_yaw_torque = (
         2.0
         * KM
         * maximum_thrust
     )
-
 
     attitude_controller = AttitudeController(
 
@@ -789,18 +935,15 @@ def run_simulation():
         max_yaw_torque=maximum_yaw_torque,
     )
 
-
     steps = int(
-        STAGE2B_SIMULATION_TIME
+        STAGE3A_SIMULATION_TIME
         / DT
     )
-
 
     time = (
         np.arange(steps)
         * DT
     )
-
 
     position_history = np.zeros(
         (steps, 3)
@@ -846,10 +989,17 @@ def run_simulation():
         (steps, 4)
     )
 
+    morphology_history = np.zeros(
+        steps
+    )
 
-    # ==================================================================
-    # MAIN SIMULATION LOOP
-    # ==================================================================
+    arm_length_history = np.zeros(
+        steps
+    )
+
+    inertia_scale_history = np.zeros(
+        steps
+    )
 
     for i, t in enumerate(time):
 
@@ -859,6 +1009,12 @@ def run_simulation():
             target_acceleration,
         ) = continuous_trajectory(t)
 
+        (
+            morphing_state,
+            current_arm_length,
+            current_inertia,
+            inertia_scale,
+        ) = morphology_parameters(t)
 
         target_position_history[i] = (
             target_position
@@ -872,6 +1028,17 @@ def run_simulation():
             target_acceleration
         )
 
+        morphology_history[i] = (
+            morphing_state
+        )
+
+        arm_length_history[i] = (
+            current_arm_length
+        )
+
+        inertia_scale_history[i] = (
+            inertia_scale
+        )
 
         # --------------------------------------------------------------
         # Position controller
@@ -894,7 +1061,6 @@ def run_simulation():
             target_acceleration,
         )
 
-
         desired_angles = np.array(
             [
                 desired_roll,
@@ -903,11 +1069,9 @@ def run_simulation():
             ]
         )
 
-
         desired_angle_history[i] = (
             desired_angles
         )
-
 
         # --------------------------------------------------------------
         # Attitude controller
@@ -922,7 +1086,6 @@ def run_simulation():
             )
         )
 
-
         # --------------------------------------------------------------
         # Position errors
         # --------------------------------------------------------------
@@ -936,7 +1099,6 @@ def run_simulation():
             target_velocity
             - velocity
         )
-
 
         # --------------------------------------------------------------
         # Vertical control
@@ -953,7 +1115,6 @@ def run_simulation():
             * velocity_error[2]
         )
 
-
         vertical_acceleration = np.clip(
 
             vertical_acceleration,
@@ -963,7 +1124,6 @@ def run_simulation():
             MAX_VERTICAL_ACCELERATION,
         )
 
-
         desired_vertical_force = (
             MASS
             * (
@@ -971,7 +1131,6 @@ def run_simulation():
                 + vertical_acceleration
             )
         )
-
 
         # --------------------------------------------------------------
         # Current attitude
@@ -984,24 +1143,20 @@ def run_simulation():
             angles[2],
         )
 
-
         vertical_thrust_factor = (
             R[2, 2]
         )
-
 
         vertical_thrust_factor = max(
             vertical_thrust_factor,
             0.50,
         )
 
-
         required_total_thrust = (
 
             desired_vertical_force
             / vertical_thrust_factor
         )
-
 
         # --------------------------------------------------------------
         # Horizontal control
@@ -1028,13 +1183,11 @@ def run_simulation():
             * velocity_error[:2]
         )
 
-
         horizontal_magnitude = (
             np.linalg.norm(
                 horizontal_acceleration
             )
         )
-
 
         if (
             horizontal_magnitude
@@ -1047,14 +1200,12 @@ def run_simulation():
                 / horizontal_magnitude
             )
 
-
         horizontal_force = (
             MASS
             * np.linalg.norm(
                 horizontal_acceleration
             )
         )
-
 
         # Combine vertical and horizontal force requirements.
 
@@ -1063,7 +1214,6 @@ def run_simulation():
             required_total_thrust**2
             + horizontal_force**2
         )
-
 
         required_total_thrust = np.clip(
 
@@ -1074,9 +1224,8 @@ def run_simulation():
             4.0 * maximum_thrust,
         )
 
-
         # --------------------------------------------------------------
-        # Motor mixing
+        # Dynamic motor mixing
         # --------------------------------------------------------------
 
         commanded_motor_thrusts = (
@@ -1087,9 +1236,10 @@ def run_simulation():
                 torque_command[0],
                 torque_command[1],
                 torque_command[2],
+
+                current_arm_length,
             )
         )
-
 
         commanded_rpms = np.array(
 
@@ -1103,13 +1253,11 @@ def run_simulation():
             ]
         )
 
-
         # --------------------------------------------------------------
         # Motor dynamics
         # --------------------------------------------------------------
 
         actual_rpms = np.zeros(4)
-
 
         for motor_index in range(4):
 
@@ -1123,7 +1271,6 @@ def run_simulation():
                 )
             )
 
-
         actual_motor_thrusts = np.array(
 
             [
@@ -1136,20 +1283,18 @@ def run_simulation():
             ]
         )
 
-
         actual_total_thrust = (
             np.sum(
                 actual_motor_thrusts
             )
         )
 
-
         actual_torque = (
             calculate_actual_torques(
-                actual_motor_thrusts
+                actual_motor_thrusts,
+                current_arm_length,
             )
         )
-
 
         # --------------------------------------------------------------
         # Translational dynamics
@@ -1162,7 +1307,6 @@ def run_simulation():
             angles[2],
         )
 
-
         thrust_body = np.array(
             [
                 0.0,
@@ -1171,12 +1315,10 @@ def run_simulation():
             ]
         )
 
-
         thrust_world = (
             R
             @ thrust_body
         )
-
 
         gravity_force = np.array(
             [
@@ -1186,30 +1328,25 @@ def run_simulation():
             ]
         )
 
-
         total_force = (
             thrust_world
             + gravity_force
         )
-
 
         acceleration = (
             total_force
             / MASS
         )
 
-
         velocity += (
             acceleration
             * DT
         )
 
-
         position += (
             velocity
             * DT
         )
-
 
         # --------------------------------------------------------------
         # Ground constraint
@@ -1225,20 +1362,18 @@ def run_simulation():
 
                 velocity[2] = 0.0
 
-
         # --------------------------------------------------------------
-        # Rotational dynamics
+        # Rotational dynamics with time-varying inertia
         # --------------------------------------------------------------
 
         angular_momentum = (
-            INERTIA
+            current_inertia
             @ angular_rates
         )
 
-
         angular_acceleration = np.linalg.solve(
 
-            INERTIA,
+            current_inertia,
 
             actual_torque
             -
@@ -1248,12 +1383,10 @@ def run_simulation():
             ),
         )
 
-
         angular_rates += (
             angular_acceleration
             * DT
         )
-
 
         # --------------------------------------------------------------
         # Euler-angle kinematics
@@ -1263,22 +1396,18 @@ def run_simulation():
 
         theta = angles[1]
 
-
         cos_theta = np.cos(
             theta
         )
-
 
         if abs(cos_theta) < 1e-5:
 
             cos_theta = 1e-5
 
-
         tan_theta = (
             np.sin(theta)
             / cos_theta
         )
-
 
         euler_rate_matrix = np.array(
 
@@ -1307,18 +1436,15 @@ def run_simulation():
             ]
         )
 
-
         angle_rates = (
             euler_rate_matrix
             @ angular_rates
         )
 
-
         angles += (
             angle_rates
             * DT
         )
-
 
         angles[2] = np.arctan2(
 
@@ -1330,7 +1456,6 @@ def run_simulation():
                 angles[2]
             ),
         )
-
 
         # --------------------------------------------------------------
         # Store results
@@ -1364,7 +1489,6 @@ def run_simulation():
             actual_rpms
         )
 
-
     return (
 
         time,
@@ -1390,6 +1514,12 @@ def run_simulation():
         rpm_history,
 
         desired_angle_history,
+
+        morphology_history,
+
+        arm_length_history,
+
+        inertia_scale_history,
     )
 
 
@@ -1402,6 +1532,9 @@ def calculate_metrics(
     velocity,
     angles,
     target_position,
+    morphology,
+    arm_length,
+    inertia_scale,
 ):
 
     position_error = (
@@ -1409,24 +1542,20 @@ def calculate_metrics(
         - position
     )
 
-
     error_magnitude = np.linalg.norm(
         position_error,
         axis=1,
     )
-
 
     horizontal_error = np.linalg.norm(
         position_error[:, :2],
         axis=1,
     )
 
-
     speed = np.linalg.norm(
         velocity,
         axis=1,
     )
-
 
     roll_deg = np.rad2deg(
         angles[:, 0]
@@ -1440,7 +1569,6 @@ def calculate_metrics(
         angles[:, 2]
     )
 
-
     final_position = (
         position[-1]
     )
@@ -1452,7 +1580,6 @@ def calculate_metrics(
     final_angles = (
         angles[-1]
     )
-
 
     return {
 
@@ -1532,6 +1659,21 @@ def calculate_metrics(
                     yaw_deg
                 )
             ),
+
+        "Minimum arm length (m)":
+            np.min(arm_length),
+
+        "Maximum arm length (m)":
+            np.max(arm_length),
+
+        "Minimum inertia scale":
+            np.min(inertia_scale),
+
+        "Maximum inertia scale":
+            np.max(inertia_scale),
+
+        "Final morphology state":
+            morphology[-1],
 
         "Final position error (m)":
             np.linalg.norm(
@@ -1662,8 +1804,8 @@ def plot_position_results(
 
 
     fig.suptitle(
-        "MorphoAqua - Stage 2B "
-        "Continuous 3-D Trajectory Tracking"
+        "MorphoAqua - Stage 3A "
+        "In-Flight Morphing + 3-D Tracking"
     )
 
 
@@ -1672,7 +1814,7 @@ def plot_position_results(
 
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_2B_position_tracking.png",
+        "Stage_3A_position_tracking.png",
     )
 
 
@@ -1748,8 +1890,8 @@ def plot_3d_trajectory(
 
 
     ax.set_title(
-        "MorphoAqua - Stage 2B "
-        "Continuous 3-D Trajectory"
+        "MorphoAqua - Stage 3A "
+        "In-Flight Morphing Trajectory"
     )
 
 
@@ -1763,7 +1905,7 @@ def plot_3d_trajectory(
 
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_2B_3D_trajectory.png",
+        "Stage_3A_3D_trajectory.png",
     )
 
 
@@ -1791,15 +1933,17 @@ def plot_control_results(
     torque,
     rpm,
     desired_angles,
+    morphology,
+    arm_length,
+    inertia_scale,
 ):
 
     fig, axes = plt.subplots(
-        5,
+        6,
         1,
-        figsize=(13, 16),
+        figsize=(13, 19),
         sharex=True,
     )
-
 
     # --------------------------------------------------------------
     # Velocity
@@ -1828,9 +1972,7 @@ def plot_control_results(
     )
 
     axes[0].legend()
-
     axes[0].grid(True)
-
 
     # --------------------------------------------------------------
     # Attitude
@@ -1883,9 +2025,7 @@ def plot_control_results(
     )
 
     axes[1].legend()
-
     axes[1].grid(True)
-
 
     # --------------------------------------------------------------
     # Thrust
@@ -1908,9 +2048,7 @@ def plot_control_results(
     )
 
     axes[2].legend()
-
     axes[2].grid(True)
-
 
     # --------------------------------------------------------------
     # Torque
@@ -1939,12 +2077,10 @@ def plot_control_results(
     )
 
     axes[3].legend()
-
     axes[3].grid(True)
 
-
     # --------------------------------------------------------------
-    # RPM
+    # Motor RPM
     # --------------------------------------------------------------
 
     for motor_index in range(4):
@@ -1957,41 +2093,83 @@ def plot_control_results(
             ),
         )
 
-
     axes[4].set_ylabel(
         "RPM"
     )
 
-    axes[4].set_xlabel(
+    axes[4].legend()
+    axes[4].grid(True)
+
+    # --------------------------------------------------------------
+    # Morphology
+    # --------------------------------------------------------------
+
+    ax_morph = axes[5]
+
+    ax_morph.plot(
+        time,
+        arm_length,
+        label="Arm length (m)",
+    )
+
+    ax_morph.set_ylabel(
+        "Arm length (m)"
+    )
+
+    ax_morph.set_xlabel(
         "Time (s)"
     )
 
-    axes[4].legend()
+    ax_morph.grid(True)
 
-    axes[4].grid(True)
+    ax_state = ax_morph.twinx()
 
-
-    fig.suptitle(
-        "MorphoAqua - Stage 2B "
-        "Control and Actuator Response"
+    ax_state.plot(
+        time,
+        morphology,
+        "--",
+        label="Morphing state",
     )
 
+    ax_state.set_ylabel(
+        "Morphing state"
+    )
+
+    ax_morph.set_title(
+        "Morphology transition and arm length"
+    )
+
+    lines_1, labels_1 = (
+        ax_morph.get_legend_handles_labels()
+    )
+
+    lines_2, labels_2 = (
+        ax_state.get_legend_handles_labels()
+    )
+
+    ax_morph.legend(
+        lines_1 + lines_2,
+        labels_1 + labels_2,
+        loc="upper right",
+    )
+
+    fig.suptitle(
+        "MorphoAqua - Stage 3A "
+        "Control, Actuator and Morphing Response"
+    )
 
     plt.tight_layout()
 
-
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_2B_control_response.png",
+        "Stage_3A_control_morphing_response.png",
     )
-
 
     plt.savefig(
         output_path,
         dpi=200,
         bbox_inches="tight",
     )
-
 
     plt.show()
 
@@ -2007,17 +2185,16 @@ def main():
     print("=" * 70)
 
     print(
-        "MORPHOAQUA - STAGE 2B"
+        "MORPHOAQUA - STAGE 3A"
     )
 
     print(
-        "CONTINUOUS 3-D TRAJECTORY TRACKING"
+        "IN-FLIGHT MORPHING DYNAMICS"
     )
 
     print("=" * 70)
 
     print()
-
 
     print(
         "Mission:"
@@ -2032,11 +2209,15 @@ def main():
     )
 
     print(
-        "Continuous closed 3-D loop"
+        "Continuous closed 3-D trajectory"
     )
 
     print(
-        "Smooth return to (0.00, 0.00, 2.00)"
+        "Compact -> extended morphing"
+    )
+
+    print(
+        "Extended -> compact morphing"
     )
 
     print(
@@ -2045,17 +2226,35 @@ def main():
 
     print()
 
+    print(
+        "Morphology:"
+    )
 
     print(
-        f"Simulation time: "
-        f"{STAGE2B_SIMULATION_TIME:.1f} s"
+        f"Compact arm ratio: "
+        f"{COMPACT_ARM_RATIO:.2f}"
+    )
+
+    print(
+        f"Extended arm ratio: "
+        f"{EXTENDED_ARM_RATIO:.2f}"
+    )
+
+    print(
+        "Inertia scaling: "
+        "proportional to arm-length ratio squared"
     )
 
     print()
 
+    print(
+        f"Simulation time: "
+        f"{STAGE3A_SIMULATION_TIME:.1f} s"
+    )
+
+    print()
 
     results = run_simulation()
-
 
     (
         time,
@@ -2070,28 +2269,30 @@ def main():
         torque,
         rpm,
         desired_angles,
+        morphology,
+        arm_length,
+        inertia_scale,
     ) = results
-
 
     metrics = calculate_metrics(
         position,
         velocity,
         angles,
         target_position,
+        morphology,
+        arm_length,
+        inertia_scale,
     )
-
 
     print()
 
     print(
-        "CONTINUOUS 3-D TRAJECTORY "
-        "PERFORMANCE METRICS"
+        "STAGE 3A PERFORMANCE METRICS"
     )
 
     print(
         "-" * 70
     )
-
 
     for name, value in metrics.items():
 
@@ -2100,13 +2301,11 @@ def main():
             f"{value:.6f}"
         )
 
-
     print(
         "-" * 70
     )
 
     print()
-
 
     print(
         "Controller configuration:"
@@ -2130,29 +2329,30 @@ def main():
     )
 
     print(
-        "Trajectory derivatives: "
-        "Analytical position, velocity and acceleration"
+        "Morphology: Prescribed smooth arm-length transition"
     )
 
     print(
-        "Vertical control: "
-        "Tilt-compensated thrust"
+        "Inertia: Time-varying parameterized model"
     )
 
     print(
         "Motor allocation: "
-        "Torque-limited collective-preserving mixer"
+        "Dynamic torque-limited mixer"
     )
-
-    print()
-
 
     print(
-        "Stage 2B simulation completed."
+        "Rotational dynamics: "
+        "Time-varying rigid-body inertia"
     )
 
     print()
 
+    print(
+        "Stage 3A simulation completed."
+    )
+
+    print()
 
     print(
         "Results saved to:"
@@ -2161,24 +2361,23 @@ def main():
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_2B_position_tracking.png",
+            "Stage_3A_position_tracking.png",
         )
     )
 
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_2B_3D_trajectory.png",
+            "Stage_3A_3D_trajectory.png",
         )
     )
 
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_2B_control_response.png",
+            "Stage_3A_control_morphing_response.png",
         )
     )
-
 
     plot_position_results(
         time,
@@ -2186,12 +2385,10 @@ def main():
         target_position,
     )
 
-
     plot_3d_trajectory(
         position,
         target_position,
     )
-
 
     plot_control_results(
         time,
@@ -2201,6 +2398,9 @@ def main():
         torque,
         rpm,
         desired_angles,
+        morphology,
+        arm_length,
+        inertia_scale,
     )
 
 
