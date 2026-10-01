@@ -1,64 +1,62 @@
 """
 ======================================================================
-MorphoAqua - Stage 5
-Fully Submerged 3-D Trajectory Tracking
+MorphoAqua - Stage 5B-1
+Integrated Aerial -> Water-Entry -> Underwater Mission
 ======================================================================
 
-Mission:
+Purpose
+-------
+Stage 5B-1 is the first integration step toward the final Stage 5B
+research framework.
 
-    0-4 s     Smooth descent:
-              z = -0.60 m -> -1.00 m
+It combines the validated physical elements developed earlier:
 
-    4-5 s     Submerged stabilization
-
-    5-10 s    3-D diagonal trajectory:
-              (0.00, 0.00, -1.00)
-              ->
-              (+0.80, +0.50, -1.20) m
-
-    10-16 s   3-D trajectory:
-              (+0.80, +0.50, -1.20)
-              ->
-              (-0.60, -0.50, -0.80) m
-
-    16-20 s   Return:
-              (-0.60, -0.50, -0.80)
-              ->
-              (0.00, 0.00, -1.00) m
-
-    20-21 s   Final submerged stabilization
-
-
-Underwater model:
-
-    - Fully submerged immersion = 1
-    - Buoyancy
-    - Quadratic hydrodynamic drag
-    - 30% retained propulsion effectiveness
-    - Water-induced rotational damping
     - 6-DOF rigid-body dynamics
+    - 3-D trajectory tracking
+    - in-flight morphology change
+    - time-varying inertia and dI/dt compensation
+    - air-water interface model
+    - buoyancy
+    - quadratic hydrodynamic drag
+    - medium-dependent propulsion effectiveness
+    - underwater 3-D trajectory tracking
+    - actuator and motor dynamics
+    - actuator saturation reporting
 
+Mission
+-------
+    0-3 s      Aerial takeoff: z = 0 -> +2.0 m
+    3-6 s      Compact -> extended morphology
+    6-8 s      Extended aerial hold
+    8-11 s     Extended -> compact morphology
+    11-14 s    Controlled descent through air-water interface
+    14-18 s    Submerged stabilization:
+               z = -0.60 m -> -1.00 m
+    18-23 s    Underwater trajectory 1:
+               (0.0, 0.0, -1.0) ->
+               (+0.8, +0.5, -1.2) m
+    23-29 s    Underwater trajectory 2:
+               (+0.8, +0.5, -1.2) ->
+               (-0.6, -0.5, -0.8) m
+    29-33 s    Return:
+               (-0.6, -0.5, -0.8) ->
+               (0.0, 0.0, -1.0) m
+    33-35 s    Final submerged stabilization
 
-Control model:
+Important modeling note
+-----------------------
+This is still a numerical simulation. Hydrodynamic and water-entry
+properties are parameterized assumptions, not experimentally measured
+vehicle data.
 
-    - World-frame position PD
-    - Analytical trajectory feedforward
-    - Required world-frame thrust vector
-    - Attitude-limit-aware force projection
-    - Morphology-aware attitude control
-    - Gyroscopic compensation
-    - Torque-limited motor allocation
-    - Motor dynamics
-    - Actuator saturation reporting
+Stage 5B-1 intentionally does NOT yet claim:
+    - full CFD water-entry slamming
+    - real sensor hardware
+    - GPS-denied state estimation
+    - MPC/RL/learning-based adaptation
+    - experimental structural/material validation
 
-
-Important modeling note:
-
-    Hydrodynamic quantities are parameterized simulation assumptions.
-    They are NOT experimentally measured properties of a physical
-    MorphoAqua vehicle.
-
-This stage is numerical simulation only.
+Those are later integration layers of the final Stage 5B build.
 ======================================================================
 """
 
@@ -119,30 +117,42 @@ from motor_model import (
 # SIMULATION CONFIGURATION
 # ======================================================================
 
-STAGE5_SIMULATION_TIME = 21.0
+STAGE5B_SIMULATION_TIME = 35.0
 
 
 # ======================================================================
 # MISSION TIMELINE
 # ======================================================================
 
-DESCENT_START_TIME = 0.0
-DESCENT_END_TIME = 4.0
+TAKEOFF_START_TIME = 0.0
+TAKEOFF_END_TIME = 3.0
 
-SUBMERGED_HOLD_START_TIME = 4.0
-SUBMERGED_HOLD_END_TIME = 5.0
+AERIAL_MORPHING_START_TIME = 3.0
+AERIAL_MORPHING_END_TIME = 6.0
 
-TRAJECTORY_1_START_TIME = 5.0
-TRAJECTORY_1_END_TIME = 10.0
+AERIAL_HOLD_START_TIME = 6.0
+AERIAL_HOLD_END_TIME = 8.0
 
-TRAJECTORY_2_START_TIME = 10.0
-TRAJECTORY_2_END_TIME = 16.0
+WATER_ENTRY_MORPHING_START_TIME = 8.0
+WATER_ENTRY_MORPHING_END_TIME = 11.0
 
-RETURN_START_TIME = 16.0
-RETURN_END_TIME = 20.0
+WATER_DESCENT_START_TIME = 11.0
+WATER_DESCENT_END_TIME = 14.0
 
-FINAL_HOLD_START_TIME = 20.0
-FINAL_HOLD_END_TIME = 21.0
+SUBMERGED_STABILIZATION_START_TIME = 14.0
+SUBMERGED_STABILIZATION_END_TIME = 18.0
+
+UNDERWATER_TRAJECTORY_1_START_TIME = 18.0
+UNDERWATER_TRAJECTORY_1_END_TIME = 23.0
+
+UNDERWATER_TRAJECTORY_2_START_TIME = 23.0
+UNDERWATER_TRAJECTORY_2_END_TIME = 29.0
+
+RETURN_START_TIME = 29.0
+RETURN_END_TIME = 33.0
+
+FINAL_HOLD_START_TIME = 33.0
+FINAL_HOLD_END_TIME = 35.0
 
 
 # ======================================================================
@@ -153,59 +163,99 @@ INITIAL_POSITION = np.array(
     [
         0.0,
         0.0,
-        -0.60,
-    ]
+        0.0,
+    ],
+    dtype=float,
 )
 
-DEPTH_TARGET = np.array(
+
+TAKEOFF_TARGET = np.array(
+    [
+        0.0,
+        0.0,
+        2.0,
+    ],
+    dtype=float,
+)
+
+
+WATER_ENTRY_TARGET = np.array(
+    [
+        0.0,
+        0.0,
+        -0.60,
+    ],
+    dtype=float,
+)
+
+
+UNDERWATER_HOLD_TARGET = np.array(
     [
         0.0,
         0.0,
         -1.00,
-    ]
+    ],
+    dtype=float,
 )
+
 
 TRAJECTORY_1_TARGET = np.array(
     [
         0.80,
         0.50,
         -1.20,
-    ]
+    ],
+    dtype=float,
 )
+
 
 TRAJECTORY_2_TARGET = np.array(
     [
         -0.60,
         -0.50,
         -0.80,
-    ]
+    ],
+    dtype=float,
 )
+
 
 FINAL_TARGET = np.array(
     [
         0.0,
         0.0,
         -1.00,
-    ]
+    ],
+    dtype=float,
 )
+
 
 TARGET_YAW = 0.0
 
 
 # ======================================================================
-# WATER MODEL
+# MORPHOLOGY MODEL
 # ======================================================================
 
-WATER_DENSITY = 1000.0
+COMPACT_ARM_RATIO = 0.80
+EXTENDED_ARM_RATIO = 1.20
 
+
+# ======================================================================
+# AIR-WATER MODEL
+# ======================================================================
+
+WATER_SURFACE_Z = 0.0
+VEHICLE_HALF_HEIGHT = 0.15
+
+WATER_DENSITY = 1000.0
 DISPLACED_VOLUME = 0.00110
 
 WATER_DRAG_COEFFICIENT = 0.90
-
 WATER_REFERENCE_AREA = 0.025
 
 WATER_ROTATIONAL_DAMPING = 0.020
 
+AIR_PROPULSION_EFFECTIVENESS = 1.00
 FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS = 0.30
 
 
@@ -214,37 +264,11 @@ FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS = 0.30
 # ======================================================================
 
 MAX_HORIZONTAL_ACCELERATION = 2.0
-
 MAX_VERTICAL_ACCELERATION = 2.5
 
 
 # ======================================================================
-# MORPHOLOGY
-# ======================================================================
-
-COMPACT_ARM_RATIO = 0.80
-
-CURRENT_ARM_LENGTH = (
-    ARM_LENGTH
-    * COMPACT_ARM_RATIO
-)
-
-CURRENT_INERTIA = (
-    INERTIA
-    * COMPACT_ARM_RATIO**2
-)
-
-INERTIA_SCALE = (
-    COMPACT_ARM_RATIO**2
-)
-
-INERTIA_RATE = np.zeros(
-    (3, 3)
-)
-
-
-# ======================================================================
-# RESULTS DIRECTORY
+# RESULTS
 # ======================================================================
 
 RESULTS_DIRECTORY = "results"
@@ -256,10 +280,13 @@ os.makedirs(
 
 
 # ======================================================================
-# QUINTIC SMOOTHSTEP
+# GENERIC TRAJECTORY PROFILE
 # ======================================================================
 
 def smoothstep_profile(u):
+    """
+    Quintic profile with zero first and second derivatives at endpoints.
+    """
 
     u = np.clip(
         u,
@@ -292,10 +319,6 @@ def smoothstep_profile(u):
     )
 
 
-# ======================================================================
-# GENERAL TRAJECTORY SEGMENT
-# ======================================================================
-
 def interpolate_segment(
     t,
     start_time,
@@ -303,22 +326,28 @@ def interpolate_segment(
     start_position,
     end_position,
 ):
+    """
+    Quintic smooth interpolation between two 3-D points.
+    """
 
     duration = (
         end_time
         - start_time
     )
 
+    if duration <= 0.0:
+        raise ValueError(
+            "Trajectory segment duration must be positive."
+        )
+
     u = (
         t
         - start_time
     ) / duration
 
-    (
-        s,
-        ds,
-        d2s,
-    ) = smoothstep_profile(u)
+    s, ds, d2s = (
+        smoothstep_profile(u)
+    )
 
     delta = (
         end_position
@@ -350,114 +379,224 @@ def interpolate_segment(
 
 
 # ======================================================================
-# STAGE 5 REFERENCE TRAJECTORY
+# MORPHOLOGY
 # ======================================================================
 
-def stage5_trajectory(t):
+def morphology_profile(t):
+    """
+    Returns:
 
-    # --------------------------------------------------------------
-    # DESCENT
-    # --------------------------------------------------------------
+        morphology_state
+            0 = compact
+            1 = extended
 
-    if t < DESCENT_END_TIME:
+        morphology_rate
+        morphology_acceleration
+    """
 
-        return interpolate_segment(
-            t,
-            DESCENT_START_TIME,
-            DESCENT_END_TIME,
-            INITIAL_POSITION,
-            DEPTH_TARGET,
+    if t < AERIAL_MORPHING_START_TIME:
+        return 0.0, 0.0, 0.0
+
+    if t < AERIAL_MORPHING_END_TIME:
+
+        u = (
+            t
+            - AERIAL_MORPHING_START_TIME
+        ) / (
+            AERIAL_MORPHING_END_TIME
+            - AERIAL_MORPHING_START_TIME
         )
 
-    # --------------------------------------------------------------
-    # SUBMERGED HOLD
-    # --------------------------------------------------------------
+        s, ds, d2s = (
+            smoothstep_profile(u)
+        )
 
-    if t < SUBMERGED_HOLD_END_TIME:
+        duration = (
+            AERIAL_MORPHING_END_TIME
+            - AERIAL_MORPHING_START_TIME
+        )
 
         return (
-            DEPTH_TARGET.copy(),
-            np.zeros(3),
-            np.zeros(3),
+            float(s),
+            float(ds / duration),
+            float(d2s / duration**2),
         )
 
-    # --------------------------------------------------------------
-    # 3-D TRAJECTORY 1
-    # --------------------------------------------------------------
+    if t < WATER_ENTRY_MORPHING_START_TIME:
+        return 1.0, 0.0, 0.0
 
-    if t < TRAJECTORY_1_END_TIME:
+    if t < WATER_ENTRY_MORPHING_END_TIME:
 
-        return interpolate_segment(
-            t,
-            TRAJECTORY_1_START_TIME,
-            TRAJECTORY_1_END_TIME,
-            DEPTH_TARGET,
-            TRAJECTORY_1_TARGET,
+        u = (
+            t
+            - WATER_ENTRY_MORPHING_START_TIME
+        ) / (
+            WATER_ENTRY_MORPHING_END_TIME
+            - WATER_ENTRY_MORPHING_START_TIME
         )
 
-    # --------------------------------------------------------------
-    # 3-D TRAJECTORY 2
-    # --------------------------------------------------------------
-
-    if t < TRAJECTORY_2_END_TIME:
-
-        return interpolate_segment(
-            t,
-            TRAJECTORY_2_START_TIME,
-            TRAJECTORY_2_END_TIME,
-            TRAJECTORY_1_TARGET,
-            TRAJECTORY_2_TARGET,
+        s, ds, d2s = (
+            smoothstep_profile(u)
         )
 
-    # --------------------------------------------------------------
-    # RETURN
-    # --------------------------------------------------------------
-
-    if t < RETURN_END_TIME:
-
-        return interpolate_segment(
-            t,
-            RETURN_START_TIME,
-            RETURN_END_TIME,
-            TRAJECTORY_2_TARGET,
-            FINAL_TARGET,
+        duration = (
+            WATER_ENTRY_MORPHING_END_TIME
+            - WATER_ENTRY_MORPHING_START_TIME
         )
-
-    # --------------------------------------------------------------
-    # FINAL SUBMERGED STABILIZATION
-    # --------------------------------------------------------------
-
-    if t < FINAL_HOLD_END_TIME:
 
         return (
-            FINAL_TARGET.copy(),
-            np.zeros(3),
-            np.zeros(3),
+            float(1.0 - s),
+            float(-ds / duration),
+            float(-d2s / duration**2),
         )
 
-    # --------------------------------------------------------------
-    # FINAL TARGET
-    # --------------------------------------------------------------
+    return 0.0, 0.0, 0.0
+
+
+def morphology_parameters(t):
+    """
+    Calculate time-varying arm length and diagonal inertia.
+
+    I(t) = I0 * arm_ratio^2
+
+    dI/dt = I0 * 2 * arm_ratio * d(arm_ratio)/dt
+    """
+
+    (
+        morphology_state,
+        morphology_rate,
+        morphology_acceleration,
+    ) = morphology_profile(t)
+
+    arm_ratio = (
+        COMPACT_ARM_RATIO
+        + morphology_state
+        * (
+            EXTENDED_ARM_RATIO
+            - COMPACT_ARM_RATIO
+        )
+    )
+
+    arm_ratio_rate = (
+        morphology_rate
+        * (
+            EXTENDED_ARM_RATIO
+            - COMPACT_ARM_RATIO
+        )
+    )
+
+    arm_ratio_acceleration = (
+        morphology_acceleration
+        * (
+            EXTENDED_ARM_RATIO
+            - COMPACT_ARM_RATIO
+        )
+    )
+
+    current_arm_length = (
+        ARM_LENGTH
+        * arm_ratio
+    )
+
+    arm_length_rate = (
+        ARM_LENGTH
+        * arm_ratio_rate
+    )
+
+    inertia_scale = (
+        arm_ratio**2
+    )
+
+    current_inertia = (
+        INERTIA
+        * inertia_scale
+    )
+
+    inertia_rate = (
+        INERTIA
+        * (
+            2.0
+            * arm_ratio
+            * arm_ratio_rate
+        )
+    )
 
     return (
-        FINAL_TARGET.copy(),
-        np.zeros(3),
-        np.zeros(3),
+        morphology_state,
+        morphology_rate,
+        morphology_acceleration,
+        current_arm_length,
+        arm_length_rate,
+        current_inertia,
+        inertia_rate,
+        inertia_scale,
+        arm_ratio_acceleration,
     )
 
 
 # ======================================================================
-# UNDERWATER FORCE MODEL
+# IMMERSION / MEDIUM MODEL
 # ======================================================================
 
-def calculate_underwater_effects(
+def calculate_immersion_fraction(z):
+    """
+    Continuous immersion fraction:
+
+        0.0 = vehicle fully above water
+        0.5 = approximately half immersed
+        1.0 = vehicle fully submerged
+    """
+
+    upper_transition = (
+        WATER_SURFACE_Z
+        + VEHICLE_HALF_HEIGHT
+    )
+
+    lower_transition = (
+        WATER_SURFACE_Z
+        - VEHICLE_HALF_HEIGHT
+    )
+
+    if z >= upper_transition:
+        return 0.0
+
+    if z <= lower_transition:
+        return 1.0
+
+    u = (
+        upper_transition
+        - z
+    ) / (
+        upper_transition
+        - lower_transition
+    )
+
+    s, _, _ = (
+        smoothstep_profile(u)
+    )
+
+    return float(s)
+
+
+def calculate_medium_effects(
+    position,
     velocity,
 ):
+    """
+    Compute buoyancy, hydrodynamic drag and propulsion effectiveness.
+    """
+
+    immersion = (
+        calculate_immersion_fraction(
+            position[2]
+        )
+    )
 
     buoyancy_magnitude = (
         WATER_DENSITY
         * GRAVITY
         * DISPLACED_VOLUME
+        * immersion
     )
 
     buoyancy_force = np.array(
@@ -472,7 +611,10 @@ def calculate_underwater_effects(
         velocity
     )
 
-    if speed > 1e-12:
+    if (
+        immersion > 0.0
+        and speed > 1e-12
+    ):
 
         drag_magnitude = (
             0.5
@@ -480,6 +622,7 @@ def calculate_underwater_effects(
             * WATER_DRAG_COEFFICIENT
             * WATER_REFERENCE_AREA
             * speed**2
+            * immersion
         )
 
         drag_force = (
@@ -491,13 +634,142 @@ def calculate_underwater_effects(
     else:
 
         drag_magnitude = 0.0
-
         drag_force = np.zeros(3)
 
+    propulsion_effectiveness = (
+        AIR_PROPULSION_EFFECTIVENESS
+        - immersion
+        * (
+            AIR_PROPULSION_EFFECTIVENESS
+            - FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS
+        )
+    )
+
     return (
+        immersion,
         buoyancy_force,
         drag_force,
         drag_magnitude,
+        propulsion_effectiveness,
+    )
+
+
+# ======================================================================
+# INTEGRATED REFERENCE TRAJECTORY
+# ======================================================================
+
+def stage5b_trajectory(t):
+    """
+    Integrated aerial + transition + underwater reference trajectory.
+    """
+
+    # --------------------------------------------------------------
+    # Aerial takeoff
+    # --------------------------------------------------------------
+
+    if t < TAKEOFF_END_TIME:
+
+        return interpolate_segment(
+            t,
+            TAKEOFF_START_TIME,
+            TAKEOFF_END_TIME,
+            INITIAL_POSITION,
+            TAKEOFF_TARGET,
+        )
+
+    # --------------------------------------------------------------
+    # Aerial hold while morphology extends
+    # --------------------------------------------------------------
+
+    if t < WATER_ENTRY_MORPHING_START_TIME:
+
+        return (
+            TAKEOFF_TARGET.copy(),
+            np.zeros(3),
+            np.zeros(3),
+        )
+
+    # --------------------------------------------------------------
+    # Controlled descent through water
+    # --------------------------------------------------------------
+
+    if t < WATER_DESCENT_END_TIME:
+
+        return interpolate_segment(
+            t,
+            WATER_ENTRY_MORPHING_START_TIME,
+            WATER_DESCENT_END_TIME,
+            TAKEOFF_TARGET,
+            WATER_ENTRY_TARGET,
+        )
+
+    # --------------------------------------------------------------
+    # Submerged stabilization / controlled depth transition
+    #
+    # The target changes smoothly from -0.60 m to -1.00 m rather
+    # than introducing an artificial position step at t = 14 s.
+    # --------------------------------------------------------------
+
+    if t < SUBMERGED_STABILIZATION_END_TIME:
+
+        return interpolate_segment(
+            t,
+            SUBMERGED_STABILIZATION_START_TIME,
+            SUBMERGED_STABILIZATION_END_TIME,
+            WATER_ENTRY_TARGET,
+            UNDERWATER_HOLD_TARGET,
+        )
+
+    # --------------------------------------------------------------
+    # Underwater trajectory 1
+    # --------------------------------------------------------------
+
+    if t < UNDERWATER_TRAJECTORY_1_END_TIME:
+
+        return interpolate_segment(
+            t,
+            UNDERWATER_TRAJECTORY_1_START_TIME,
+            UNDERWATER_TRAJECTORY_1_END_TIME,
+            UNDERWATER_HOLD_TARGET,
+            TRAJECTORY_1_TARGET,
+        )
+
+    # --------------------------------------------------------------
+    # Underwater trajectory 2
+    # --------------------------------------------------------------
+
+    if t < UNDERWATER_TRAJECTORY_2_END_TIME:
+
+        return interpolate_segment(
+            t,
+            UNDERWATER_TRAJECTORY_2_START_TIME,
+            UNDERWATER_TRAJECTORY_2_END_TIME,
+            TRAJECTORY_1_TARGET,
+            TRAJECTORY_2_TARGET,
+        )
+
+    # --------------------------------------------------------------
+    # Return
+    # --------------------------------------------------------------
+
+    if t < RETURN_END_TIME:
+
+        return interpolate_segment(
+            t,
+            RETURN_START_TIME,
+            RETURN_END_TIME,
+            TRAJECTORY_2_TARGET,
+            FINAL_TARGET,
+        )
+
+    # --------------------------------------------------------------
+    # Final submerged hold
+    # --------------------------------------------------------------
+
+    return (
+        FINAL_TARGET.copy(),
+        np.zeros(3),
+        np.zeros(3),
     )
 
 
@@ -505,10 +777,7 @@ def calculate_underwater_effects(
 # THRUST / RPM
 # ======================================================================
 
-def thrust_to_rpm(
-    thrust,
-):
-
+def thrust_to_rpm(thrust):
     if thrust <= 0.0:
         return 0.0
 
@@ -532,7 +801,6 @@ def thrust_to_rpm(
 
 
 def maximum_motor_thrust():
-
     omega_max = (
         MAX_RPM
         * 2.0
@@ -557,7 +825,6 @@ def calculate_motor_thrusts(
     yaw_torque,
     arm_length,
 ):
-
     arm = (
         arm_length
         / np.sqrt(2.0)
@@ -614,6 +881,13 @@ def motor_mixer(
     yaw_torque,
     arm_length,
 ):
+    """
+    Allocate thrust while respecting individual motor limits.
+
+    Collective thrust is preserved as far as possible. When the
+    requested torque makes individual motor thrust infeasible,
+    torque is scaled down instead of creating impossible commands.
+    """
 
     maximum_thrust = (
         maximum_motor_thrust()
@@ -625,7 +899,8 @@ def motor_mixer(
 
     collective_clipped = (
         requested_total
-        > 4.0 * maximum_thrust
+        > 4.0
+        * maximum_thrust
     )
 
     total_thrust = float(
@@ -719,15 +994,10 @@ def motor_mixer(
     )
 
 
-# ======================================================================
-# ACTUAL MOTOR TORQUES
-# ======================================================================
-
 def calculate_actual_torques(
     motor_thrusts,
     arm_length,
 ):
-
     arm = (
         arm_length
         / np.sqrt(2.0)
@@ -779,12 +1049,11 @@ def calculate_actual_torques(
 def force_to_desired_angles(
     required_force,
 ):
-
     magnitude = np.linalg.norm(
         required_force
     )
 
-    if magnitude < 1e-12:
+    if magnitude <= 1e-12:
 
         return np.array(
             [
@@ -829,20 +1098,22 @@ def force_to_desired_angles(
     )
 
 
-# ======================================================================
-# ATTITUDE-LIMIT-AWARE FORCE PROJECTION
-# ======================================================================
-
 def constrain_force_to_attitude_limits(
     required_force,
 ):
+    """
+    Project requested force onto the force physically feasible under
+    the available roll/pitch attitude limits.
+
+    This avoids artificially increasing thrust to compensate for an
+    unattainable thrust direction.
+    """
 
     magnitude = np.linalg.norm(
         required_force
     )
 
     if magnitude <= 1e-12:
-
         return np.zeros(3)
 
     desired_angles = (
@@ -886,8 +1157,10 @@ def morphology_aware_attitude_control(
     desired_angles,
     angles,
     angular_rates,
+    current_inertia,
+    inertia_rate,
+    inertia_scale,
 ):
-
     base_torque = (
         attitude_controller.update(
             desired_angles,
@@ -897,12 +1170,12 @@ def morphology_aware_attitude_control(
     )
 
     adaptive_torque = (
-        INERTIA_SCALE
+        inertia_scale
         * base_torque
     )
 
     angular_momentum = (
-        CURRENT_INERTIA
+        current_inertia
         @ angular_rates
     )
 
@@ -912,7 +1185,7 @@ def morphology_aware_attitude_control(
     )
 
     inertia_rate_term = (
-        INERTIA_RATE
+        inertia_rate
         @ angular_rates
     )
 
@@ -960,8 +1233,13 @@ def run_simulation():
         maximum_motor_thrust()
     )
 
+    maximum_arm_length = (
+        ARM_LENGTH
+        * EXTENDED_ARM_RATIO
+    )
+
     maximum_arm = (
-        CURRENT_ARM_LENGTH
+        maximum_arm_length
         / np.sqrt(2.0)
     )
 
@@ -996,7 +1274,7 @@ def run_simulation():
     )
 
     steps = int(
-        STAGE5_SIMULATION_TIME
+        STAGE5B_SIMULATION_TIME
         / DT
     )
 
@@ -1004,6 +1282,10 @@ def run_simulation():
         np.arange(steps)
         * DT
     )
+
+    # --------------------------------------------------------------
+    # History arrays
+    # --------------------------------------------------------------
 
     position_history = np.zeros(
         (steps, 3)
@@ -1014,6 +1296,10 @@ def run_simulation():
     )
 
     angle_history = np.zeros(
+        (steps, 3)
+    )
+
+    angular_rate_history = np.zeros(
         (steps, 3)
     )
 
@@ -1057,11 +1343,35 @@ def run_simulation():
         (steps, 4)
     )
 
+    immersion_history = np.zeros(
+        steps
+    )
+
+    propulsion_effectiveness_history = np.zeros(
+        steps
+    )
+
     buoyancy_history = np.zeros(
         steps
     )
 
     drag_history = np.zeros(
+        steps
+    )
+
+    morphology_history = np.zeros(
+        steps
+    )
+
+    morphology_rate_history = np.zeros(
+        steps
+    )
+
+    arm_length_history = np.zeros(
+        steps
+    )
+
+    inertia_scale_history = np.zeros(
         steps
     )
 
@@ -1092,7 +1402,7 @@ def run_simulation():
     )
 
     # ==================================================================
-    # MAIN SIMULATION LOOP
+    # MAIN LOOP
     # ==================================================================
 
     for i, t in enumerate(time):
@@ -1101,7 +1411,7 @@ def run_simulation():
             target_position,
             target_velocity,
             target_acceleration,
-        ) = stage5_trajectory(t)
+        ) = stage5b_trajectory(t)
 
         target_position_history[i] = (
             target_position
@@ -1114,6 +1424,65 @@ def run_simulation():
         target_acceleration_history[i] = (
             target_acceleration
         )
+
+        (
+            morphology_state,
+            morphology_rate,
+            _morphology_acceleration,
+            current_arm_length,
+            _arm_length_rate,
+            current_inertia,
+            inertia_rate,
+            inertia_scale,
+            _arm_ratio_acceleration,
+        ) = morphology_parameters(t)
+
+        morphology_history[i] = (
+            morphology_state
+        )
+
+        morphology_rate_history[i] = (
+            morphology_rate
+        )
+
+        arm_length_history[i] = (
+            current_arm_length
+        )
+
+        inertia_scale_history[i] = (
+            inertia_scale
+        )
+
+        (
+            immersion,
+            buoyancy_force,
+            hydrodynamic_drag,
+            drag_magnitude,
+            propulsion_effectiveness,
+        ) = calculate_medium_effects(
+            position,
+            velocity,
+        )
+
+        immersion_history[i] = (
+            immersion
+        )
+
+        propulsion_effectiveness_history[i] = (
+            propulsion_effectiveness
+        )
+
+        buoyancy_history[i] = (
+            buoyancy_force[2]
+        )
+
+        drag_history[i] = (
+            drag_magnitude
+        )
+
+        # --------------------------------------------------------------
+        # Position feedback
+        # --------------------------------------------------------------
 
         position_error = (
             target_position
@@ -1179,13 +1548,9 @@ def run_simulation():
             MAX_VERTICAL_ACCELERATION,
         )
 
-        (
-            buoyancy_force,
-            hydrodynamic_drag,
-            drag_magnitude,
-        ) = calculate_underwater_effects(
-            velocity
-        )
+        # --------------------------------------------------------------
+        # External forces
+        # --------------------------------------------------------------
 
         gravity_force = np.array(
             [
@@ -1195,15 +1560,11 @@ def run_simulation():
             ]
         )
 
-        buoyancy_history[i] = (
-            buoyancy_force[2]
-        )
+        # --------------------------------------------------------------
+        # Required world-frame thrust
+        # --------------------------------------------------------------
 
-        drag_history[i] = (
-            drag_magnitude
-        )
-
-        raw_required_thrust_world = (
+        raw_required_force = (
             MASS
             * feedback_acceleration
             - gravity_force
@@ -1213,13 +1574,17 @@ def run_simulation():
 
         required_thrust_world = (
             constrain_force_to_attitude_limits(
-                raw_required_thrust_world
+                raw_required_force
             )
         )
 
         required_force_history[i] = (
             required_thrust_world
         )
+
+        # --------------------------------------------------------------
+        # Desired attitude
+        # --------------------------------------------------------------
 
         desired_angles = (
             force_to_desired_angles(
@@ -1231,6 +1596,10 @@ def run_simulation():
             desired_angles
         )
 
+        # --------------------------------------------------------------
+        # Attitude control
+        # --------------------------------------------------------------
+
         (
             torque_command,
             _base_torque,
@@ -1240,7 +1609,14 @@ def run_simulation():
             desired_angles,
             angles,
             angular_rates,
+            current_inertia,
+            inertia_rate,
+            inertia_scale,
         )
+
+        # --------------------------------------------------------------
+        # Thrust-direction metrics
+        # --------------------------------------------------------------
 
         required_force_magnitude = (
             np.linalg.norm(
@@ -1272,10 +1648,7 @@ def run_simulation():
             actual_rotation[:, 2]
         )
 
-        if (
-            required_force_magnitude
-            > 1e-12
-        ):
+        if required_force_magnitude > 1e-12:
 
             required_direction = (
                 required_thrust_world
@@ -1316,24 +1689,25 @@ def run_simulation():
                 )
             )
 
-        else:
+        # --------------------------------------------------------------
+        # Medium-dependent propulsion
+        # --------------------------------------------------------------
 
-            commanded_direction_error_history[i] = (
-                0.0
-            )
-
-            thrust_direction_error_history[i] = (
-                0.0
-            )
-
-        requested_aerial_thrust = (
+        required_aerial_equivalent_thrust = (
             required_force_magnitude
-            / FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS
+            / max(
+                propulsion_effectiveness,
+                0.05,
+            )
         )
 
         requested_thrust_history[i] = (
-            requested_aerial_thrust
+            required_aerial_equivalent_thrust
         )
+
+        # --------------------------------------------------------------
+        # Motor allocation
+        # --------------------------------------------------------------
 
         (
             commanded_motor_thrusts,
@@ -1341,11 +1715,11 @@ def run_simulation():
             torque_scale,
             collective_clipped,
         ) = motor_mixer(
-            requested_aerial_thrust,
+            required_aerial_equivalent_thrust,
             torque_command[0],
             torque_command[1],
             torque_command[2],
-            CURRENT_ARM_LENGTH,
+            current_arm_length,
         )
 
         commanded_thrust_history[i] = (
@@ -1365,6 +1739,10 @@ def run_simulation():
         collective_clipped_history[i] = (
             collective_clipped
         )
+
+        # --------------------------------------------------------------
+        # Motor dynamics
+        # --------------------------------------------------------------
 
         commanded_rpms = np.array(
             [
@@ -1396,35 +1774,54 @@ def run_simulation():
             ]
         )
 
+        rpm_history[i] = (
+            actual_rpms
+        )
+
+        motor_thrust_history[i] = (
+            actual_motor_thrusts
+        )
+
         actual_total_aerial_thrust = (
             np.sum(
                 actual_motor_thrusts
             )
         )
 
+        effective_motor_thrusts = (
+            actual_motor_thrusts
+            * propulsion_effectiveness
+        )
+
         actual_total_effective_thrust = (
-            actual_total_aerial_thrust
-            * FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS
+            np.sum(
+                effective_motor_thrusts
+            )
         )
 
         effective_thrust_history[i] = (
             actual_total_effective_thrust
         )
 
+        # --------------------------------------------------------------
+        # Actual torques
+        # --------------------------------------------------------------
+
         actual_aerial_torque = (
             calculate_actual_torques(
                 actual_motor_thrusts,
-                CURRENT_ARM_LENGTH,
+                current_arm_length,
             )
         )
 
         actual_effective_torque = (
             actual_aerial_torque
-            * FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS
+            * propulsion_effectiveness
         )
 
         water_damping_torque = (
             -WATER_ROTATIONAL_DAMPING
+            * immersion
             * angular_rates
         )
 
@@ -1432,6 +1829,14 @@ def run_simulation():
             actual_effective_torque
             + water_damping_torque
         )
+
+        torque_history[i] = (
+            total_actual_torque
+        )
+
+        # --------------------------------------------------------------
+        # Translational dynamics
+        # --------------------------------------------------------------
 
         R = rotation_matrix(
             angles[0],
@@ -1474,16 +1879,22 @@ def run_simulation():
             * DT
         )
 
+        # --------------------------------------------------------------
+        # Rotational dynamics
+        # --------------------------------------------------------------
+
         angular_momentum = (
-            CURRENT_INERTIA
+            current_inertia
             @ angular_rates
         )
 
         angular_acceleration = np.linalg.solve(
-            CURRENT_INERTIA,
+            current_inertia,
             total_actual_torque
-            - INERTIA_RATE
-            @ angular_rates
+            - (
+                inertia_rate
+                @ angular_rates
+            )
             - np.cross(
                 angular_rates,
                 angular_momentum,
@@ -1495,8 +1906,11 @@ def run_simulation():
             * DT
         )
 
-        phi = angles[0]
+        # --------------------------------------------------------------
+        # Euler-angle kinematics
+        # --------------------------------------------------------------
 
+        phi = angles[0]
         theta = angles[1]
 
         cos_theta = np.cos(
@@ -1504,7 +1918,6 @@ def run_simulation():
         )
 
         if abs(cos_theta) < 1e-5:
-
             cos_theta = 1e-5
 
         tan_theta = (
@@ -1555,6 +1968,10 @@ def run_simulation():
             ),
         )
 
+        # --------------------------------------------------------------
+        # Store state
+        # --------------------------------------------------------------
+
         position_history[i] = (
             position
         )
@@ -1567,68 +1984,112 @@ def run_simulation():
             angles
         )
 
-        torque_history[i] = (
-            total_actual_torque
+        angular_rate_history[i] = (
+            angular_rates
         )
 
-        rpm_history[i] = (
-            actual_rpms
-        )
-
-        motor_thrust_history[i] = (
-            actual_motor_thrusts
-        )
-
-    return (
-        time,
-        position_history,
-        velocity_history,
-        angle_history,
-        target_position_history,
-        target_velocity_history,
-        target_acceleration_history,
-        desired_angle_history,
-        requested_thrust_history,
-        commanded_thrust_history,
-        effective_thrust_history,
-        torque_history,
-        rpm_history,
-        motor_thrust_history,
-        buoyancy_history,
-        drag_history,
-        required_force_history,
-        commanded_direction_error_history,
-        thrust_direction_error_history,
-        torque_scale_history,
-        torque_saturation_history,
-        collective_clipped_history,
-    )
+    return {
+        "time": time,
+        "position": position_history,
+        "velocity": velocity_history,
+        "angles": angle_history,
+        "angular_rates": angular_rate_history,
+        "target_position": target_position_history,
+        "target_velocity": target_velocity_history,
+        "target_acceleration": target_acceleration_history,
+        "desired_angles": desired_angle_history,
+        "requested_thrust": requested_thrust_history,
+        "commanded_thrust": commanded_thrust_history,
+        "effective_thrust": effective_thrust_history,
+        "torque": torque_history,
+        "rpm": rpm_history,
+        "motor_thrust": motor_thrust_history,
+        "immersion": immersion_history,
+        "propulsion_effectiveness": propulsion_effectiveness_history,
+        "buoyancy": buoyancy_history,
+        "drag": drag_history,
+        "morphology": morphology_history,
+        "morphology_rate": morphology_rate_history,
+        "arm_length": arm_length_history,
+        "inertia_scale": inertia_scale_history,
+        "required_force": required_force_history,
+        "commanded_direction_error": commanded_direction_error_history,
+        "thrust_direction_error": thrust_direction_error_history,
+        "torque_scale": torque_scale_history,
+        "torque_saturation": torque_saturation_history,
+        "collective_clipped": collective_clipped_history,
+    }
 
 
 # ======================================================================
 # METRICS
 # ======================================================================
 
-def calculate_metrics(
-    time,
-    position,
-    velocity,
-    angles,
-    target_position,
-    requested_thrust,
-    commanded_thrust,
-    effective_thrust,
-    torque,
-    rpm,
-    motor_thrust,
-    buoyancy,
-    drag,
-    commanded_direction_error,
-    thrust_direction_error,
-    torque_scale,
-    torque_saturation,
-    collective_clipped,
+def _masked_max(
+    values,
+    mask,
 ):
+    if np.any(mask):
+        return float(
+            np.max(
+                values[mask]
+            )
+        )
+    return 0.0
+
+
+def _masked_rms(
+    values,
+    mask,
+):
+    if np.any(mask):
+        return float(
+            np.sqrt(
+                np.mean(
+                    values[mask]**2
+                )
+            )
+        )
+    return 0.0
+
+
+def calculate_metrics(results):
+
+    time = results["time"]
+    position = results["position"]
+    velocity = results["velocity"]
+    angles = results["angles"]
+    target_position = results["target_position"]
+
+    requested_thrust = results["requested_thrust"]
+    commanded_thrust = results["commanded_thrust"]
+    effective_thrust = results["effective_thrust"]
+
+    rpm = results["rpm"]
+    motor_thrust = results["motor_thrust"]
+
+    buoyancy = results["buoyancy"]
+    drag = results["drag"]
+
+    commanded_direction_error = (
+        results["commanded_direction_error"]
+    )
+
+    thrust_direction_error = (
+        results["thrust_direction_error"]
+    )
+
+    torque_scale = (
+        results["torque_scale"]
+    )
+
+    torque_saturation = (
+        results["torque_saturation"]
+    )
+
+    collective_clipped = (
+        results["collective_clipped"]
+    )
 
     position_error = (
         target_position
@@ -1647,10 +2108,6 @@ def calculate_metrics(
             position_error[:, :2],
             axis=1,
         )
-    )
-
-    axis_error = np.abs(
-        position_error
     )
 
     speed = (
@@ -1672,21 +2129,28 @@ def calculate_metrics(
         angles[:, 2]
     )
 
-    descent_mask = (
-        time
-        < DESCENT_END_TIME
+    water_entry_mask = (
+        (time >= WATER_DESCENT_START_TIME)
+        &
+        (time < WATER_DESCENT_END_TIME)
+    )
+
+    stabilization_mask = (
+        (time >= SUBMERGED_STABILIZATION_START_TIME)
+        &
+        (time < SUBMERGED_STABILIZATION_END_TIME)
     )
 
     trajectory_1_mask = (
-        (time >= TRAJECTORY_1_START_TIME)
+        (time >= UNDERWATER_TRAJECTORY_1_START_TIME)
         &
-        (time < TRAJECTORY_1_END_TIME)
+        (time < UNDERWATER_TRAJECTORY_1_END_TIME)
     )
 
     trajectory_2_mask = (
-        (time >= TRAJECTORY_2_START_TIME)
+        (time >= UNDERWATER_TRAJECTORY_2_START_TIME)
         &
-        (time < TRAJECTORY_2_END_TIME)
+        (time < UNDERWATER_TRAJECTORY_2_END_TIME)
     )
 
     return_mask = (
@@ -1696,40 +2160,11 @@ def calculate_metrics(
     )
 
     final_hold_mask = (
-        (time >= FINAL_HOLD_START_TIME)
-        &
-        (time < FINAL_HOLD_END_TIME)
+        time >= FINAL_HOLD_START_TIME
     )
 
-    def masked_max(
-        values,
-        mask,
-    ):
-
-        if np.any(mask):
-
-            return float(
-                np.max(
-                    values[mask]
-                )
-            )
-
-        return 0.0
-
-    maximum_motor_thrust_value = (
-        maximum_motor_thrust()
-    )
-
-    maximum_rpm = float(
-        np.max(
-            rpm
-        )
-    )
-
-    maximum_individual_motor_thrust = float(
-        np.max(
-            motor_thrust
-        )
+    submerged_mask = (
+        time >= SUBMERGED_STABILIZATION_START_TIME
     )
 
     final_position = (
@@ -1745,287 +2180,371 @@ def calculate_metrics(
     )
 
     final_position_error = (
-        position_error[-1]
+        target_position[-1]
+        - final_position
     )
+
+    maximum_motor_thrust_value = (
+        maximum_motor_thrust()
+    )
+
+    maximum_rpm = float(
+        np.max(rpm)
+    )
+
+    maximum_motor_thrust_used = float(
+        np.max(motor_thrust)
+    )
+
+    if np.any(submerged_mask):
+        underwater_speed = speed[
+            submerged_mask
+        ]
+    else:
+        underwater_speed = np.array(
+            [0.0]
+        )
 
     return {
 
-        "Maximum 3-D tracking error (m)": float(
-            np.max(
-                error_magnitude
-            )
-        ),
-
-        "RMS 3-D tracking error (m)": float(
-            np.sqrt(
-                np.mean(
-                    error_magnitude**2
+        "Maximum 3-D tracking error (m)":
+            float(
+                np.max(
+                    error_magnitude
                 )
-            )
-        ),
+            ),
 
-        "Maximum X tracking error (m)": float(
-            np.max(
-                axis_error[:, 0]
-            )
-        ),
-
-        "Maximum Y tracking error (m)": float(
-            np.max(
-                axis_error[:, 1]
-            )
-        ),
-
-        "Maximum Z tracking error (m)": float(
-            np.max(
-                axis_error[:, 2]
-            )
-        ),
-
-        "RMS X tracking error (m)": float(
-            np.sqrt(
-                np.mean(
-                    position_error[:, 0]**2
+        "RMS 3-D tracking error (m)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        error_magnitude**2
+                    )
                 )
-            )
-        ),
+            ),
 
-        "RMS Y tracking error (m)": float(
-            np.sqrt(
-                np.mean(
-                    position_error[:, 1]**2
+        "Maximum horizontal tracking error (m)":
+            float(
+                np.max(
+                    horizontal_error
                 )
-            )
-        ),
+            ),
 
-        "RMS Z tracking error (m)": float(
-            np.sqrt(
-                np.mean(
-                    position_error[:, 2]**2
+        "RMS horizontal tracking error (m)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        horizontal_error**2
+                    )
                 )
-            )
-        ),
+            ),
 
-        "Maximum horizontal tracking error (m)": float(
-            np.max(
-                horizontal_error
-            )
-        ),
+        "Maximum pre-entry tracking error (m)":
+            _masked_max(
+                error_magnitude,
+                time < WATER_DESCENT_START_TIME,
+            ),
 
-        "RMS horizontal tracking error (m)": float(
-            np.sqrt(
-                np.mean(
-                    horizontal_error**2
+        "Maximum water-entry error (m)":
+            _masked_max(
+                error_magnitude,
+                water_entry_mask,
+            ),
+
+        "Maximum submerged-stabilization error (m)":
+            _masked_max(
+                error_magnitude,
+                stabilization_mask,
+            ),
+
+        "RMS submerged-stabilization error (m)":
+            _masked_rms(
+                error_magnitude,
+                stabilization_mask,
+            ),
+
+        "Maximum trajectory-1 error (m)":
+            _masked_max(
+                error_magnitude,
+                trajectory_1_mask,
+            ),
+
+        "Maximum trajectory-2 error (m)":
+            _masked_max(
+                error_magnitude,
+                trajectory_2_mask,
+            ),
+
+        "Maximum return-phase error (m)":
+            _masked_max(
+                error_magnitude,
+                return_mask,
+            ),
+
+        "Maximum final-stabilization error (m)":
+            _masked_max(
+                error_magnitude,
+                final_hold_mask,
+            ),
+
+        "RMS final-stabilization error (m)":
+            _masked_rms(
+                error_magnitude,
+                final_hold_mask,
+            ),
+
+        "Maximum final-stabilization speed (m/s)":
+            _masked_max(
+                speed,
+                final_hold_mask,
+            ),
+
+        "Maximum underwater speed (m/s)":
+            float(
+                np.max(
+                    underwater_speed
                 )
-            )
-        ),
+            ),
 
-        "Maximum descent-phase error (m)": masked_max(
-            error_magnitude,
-            descent_mask,
-        ),
-
-        "Maximum trajectory-1 error (m)": masked_max(
-            error_magnitude,
-            trajectory_1_mask,
-        ),
-
-        "Maximum trajectory-2 error (m)": masked_max(
-            error_magnitude,
-            trajectory_2_mask,
-        ),
-
-        "Maximum return-phase error (m)": masked_max(
-            error_magnitude,
-            return_mask,
-        ),
-
-        "Maximum final-stabilization error (m)": masked_max(
-            error_magnitude,
-            final_hold_mask,
-        ),
-
-        "RMS final-stabilization error (m)": float(
-            np.sqrt(
-                np.mean(
-                    error_magnitude[final_hold_mask]**2
+        "Maximum roll (deg)":
+            float(
+                np.max(
+                    np.abs(
+                        roll_deg
+                    )
                 )
-            )
-            if np.any(final_hold_mask)
-            else 0.0
-        ),
+            ),
 
-        "Maximum final-stabilization speed (m/s)": float(
-            np.max(speed[final_hold_mask])
-            if np.any(final_hold_mask)
-            else 0.0
-        ),
-
-        "Maximum underwater speed (m/s)": float(
-            np.max(
-                speed
-            )
-        ),
-
-        "Maximum roll (deg)": float(
-            np.max(
-                np.abs(
-                    roll_deg
+        "Maximum pitch (deg)":
+            float(
+                np.max(
+                    np.abs(
+                        pitch_deg
+                    )
                 )
-            )
-        ),
+            ),
 
-        "Maximum pitch (deg)": float(
-            np.max(
-                np.abs(
-                    pitch_deg
+        "Maximum yaw (deg)":
+            float(
+                np.max(
+                    np.abs(
+                        yaw_deg
+                    )
                 )
-            )
-        ),
+            ),
 
-        "Maximum yaw (deg)": float(
-            np.max(
-                np.abs(
-                    yaw_deg
+        "Maximum immersion fraction":
+            float(
+                np.max(
+                    results["immersion"]
                 )
-            )
-        ),
+            ),
 
-        "Maximum buoyancy (N)": float(
-            np.max(
-                buoyancy
-            )
-        ),
+        "Minimum propulsion effectiveness":
+            float(
+                np.min(
+                    results[
+                        "propulsion_effectiveness"
+                    ]
+                )
+            ),
 
-        "Maximum hydrodynamic drag (N)": float(
-            np.max(
-                drag
-            )
-        ),
+        "Maximum buoyancy (N)":
+            float(
+                np.max(
+                    buoyancy
+                )
+            ),
 
-        "Maximum requested aerial thrust (N)": float(
-            np.max(
-                requested_thrust
-            )
-        ),
+        "Maximum hydrodynamic drag (N)":
+            float(
+                np.max(
+                    drag
+                )
+            ),
 
-        "Maximum commanded aerial thrust (N)": float(
-            np.max(
-                commanded_thrust
-            )
-        ),
+        "Maximum requested aerial-equivalent thrust (N)":
+            float(
+                np.max(
+                    requested_thrust
+                )
+            ),
 
-        "Maximum effective thrust (N)": float(
-            np.max(
-                effective_thrust
-            )
-        ),
+        "Maximum commanded aerial thrust (N)":
+            float(
+                np.max(
+                    commanded_thrust
+                )
+            ),
 
-        "Maximum motor RPM": maximum_rpm,
+        "Maximum effective thrust (N)":
+            float(
+                np.max(
+                    effective_thrust
+                )
+            ),
 
-        "RPM margin to MAX_RPM": float(
-            MAX_RPM
-            - maximum_rpm
-        ),
+        "Maximum motor RPM":
+            maximum_rpm,
 
-        "Maximum individual motor thrust (N)": (
-            maximum_individual_motor_thrust
-        ),
+        "RPM margin to MAX_RPM":
+            float(
+                MAX_RPM
+                - maximum_rpm
+            ),
 
-        "Motor thrust margin (N)": float(
-            maximum_motor_thrust_value
-            - maximum_individual_motor_thrust
-        ),
+        "Maximum individual motor thrust (N)":
+            maximum_motor_thrust_used,
 
-        "Torque saturation events": int(
-            np.count_nonzero(
-                torque_saturation
-            )
-        ),
+        "Motor thrust margin (N)":
+            float(
+                maximum_motor_thrust_value
+                - maximum_motor_thrust_used
+            ),
 
-        "Collective thrust clipping events": int(
-            np.count_nonzero(
-                collective_clipped
-            )
-        ),
+        "Torque saturation events":
+            int(
+                np.count_nonzero(
+                    torque_saturation
+                )
+            ),
 
-        "Minimum torque allocation scale": float(
-            np.min(
-                torque_scale
-            )
-        ),
+        "Collective thrust clipping events":
+            int(
+                np.count_nonzero(
+                    collective_clipped
+                )
+            ),
 
-        "Maximum commanded force-direction error (deg)": float(
-            np.max(
-                commanded_direction_error
-            )
-        ),
+        "Minimum torque allocation scale":
+            float(
+                np.min(
+                    torque_scale
+                )
+            ),
 
-        "Maximum actual thrust-direction error (deg)": float(
-            np.max(
-                thrust_direction_error
-            )
-        ),
+        "Maximum commanded force-direction error (deg)":
+            float(
+                np.max(
+                    commanded_direction_error
+                )
+            ),
 
-        "Final position error (m)": float(
-            np.linalg.norm(
-                final_position_error
-            )
-        ),
+        "Maximum actual thrust-direction error (deg)":
+            float(
+                np.max(
+                    thrust_direction_error
+                )
+            ),
 
-        "Final X (m)": float(
-            final_position[0]
-        ),
+        "Minimum arm length (m)":
+            float(
+                np.min(
+                    results["arm_length"]
+                )
+            ),
 
-        "Final Y (m)": float(
-            final_position[1]
-        ),
+        "Maximum arm length (m)":
+            float(
+                np.max(
+                    results["arm_length"]
+                )
+            ),
 
-        "Final Z (m)": float(
-            final_position[2]
-        ),
+        "Minimum inertia scale":
+            float(
+                np.min(
+                    results["inertia_scale"]
+                )
+            ),
 
-        "Final Vx (m/s)": float(
-            final_velocity[0]
-        ),
+        "Maximum inertia scale":
+            float(
+                np.max(
+                    results["inertia_scale"]
+                )
+            ),
 
-        "Final Vy (m/s)": float(
-            final_velocity[1]
-        ),
+        "Maximum morphology rate (1/s)":
+            float(
+                np.max(
+                    np.abs(
+                        results["morphology_rate"]
+                    )
+                )
+            ),
 
-        "Final Vz (m/s)": float(
-            final_velocity[2]
-        ),
+        "Final position error (m)":
+            float(
+                np.linalg.norm(
+                    final_position_error
+                )
+            ),
 
-        "Final roll (deg)": float(
-            np.rad2deg(
-                final_angles[0]
-            )
-        ),
+        "Final X (m)":
+            float(
+                final_position[0]
+            ),
 
-        "Final pitch (deg)": float(
-            np.rad2deg(
-                final_angles[1]
-            )
-        ),
+        "Final Y (m)":
+            float(
+                final_position[1]
+            ),
 
-        "Final yaw (deg)": float(
-            np.rad2deg(
-                final_angles[2]
-            )
-        ),
+        "Final Z (m)":
+            float(
+                final_position[2]
+            ),
+
+        "Final Vx (m/s)":
+            float(
+                final_velocity[0]
+            ),
+
+        "Final Vy (m/s)":
+            float(
+                final_velocity[1]
+            ),
+
+        "Final Vz (m/s)":
+            float(
+                final_velocity[2]
+            ),
+
+        "Final roll (deg)":
+            float(
+                np.rad2deg(
+                    final_angles[0]
+                )
+            ),
+
+        "Final pitch (deg)":
+            float(
+                np.rad2deg(
+                    final_angles[1]
+                )
+            ),
+
+        "Final yaw (deg)":
+            float(
+                np.rad2deg(
+                    final_angles[2]
+                )
+            ),
     }
 
 
 # ======================================================================
-# POSITION TRACKING PLOT
+# POSITION PLOT
 # ======================================================================
 
 def plot_position_results(
-    time,
-    position,
-    target_position,
+    results,
 ):
+
+    time = results["time"]
+    position = results["position"]
+    target_position = results["target_position"]
 
     fig, axes = plt.subplots(
         3,
@@ -2040,10 +2559,7 @@ def plot_position_results(
         ("Z", 2),
     ]
 
-    for ax, (
-        label,
-        index,
-    ) in zip(
+    for ax, (label, index) in zip(
         axes,
         labels,
     ):
@@ -2061,12 +2577,19 @@ def plot_position_results(
             label=f"Target {label}",
         )
 
+        if index == 2:
+
+            ax.axhline(
+                WATER_SURFACE_Z,
+                linestyle=":",
+                label="Water surface",
+            )
+
         ax.set_ylabel(
             f"{label} Position (m)"
         )
 
         ax.grid(True)
-
         ax.legend()
 
     axes[-1].set_xlabel(
@@ -2074,15 +2597,15 @@ def plot_position_results(
     )
 
     fig.suptitle(
-        "MorphoAqua - Stage 5 "
-        "Fully Submerged 3-D Position Tracking"
+        "MorphoAqua - Stage 5B-1 "
+        "Integrated Mission Position Tracking"
     )
 
     plt.tight_layout()
 
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_5_position_tracking.png",
+        "Stage_5B1_position_tracking.png",
     )
 
     plt.savefig(
@@ -2092,7 +2615,6 @@ def plot_position_results(
     )
 
     plt.show()
-
     plt.close(fig)
 
 
@@ -2101,9 +2623,11 @@ def plot_position_results(
 # ======================================================================
 
 def plot_3d_trajectory(
-    position,
-    target_position,
+    results,
 ):
+
+    position = results["position"]
+    target_position = results["target_position"]
 
     fig = plt.figure(
         figsize=(12, 10)
@@ -2134,7 +2658,7 @@ def plot_3d_trajectory(
         [position[0, 1]],
         [position[0, 2]],
         s=60,
-        label="Initial submerged state",
+        label="Mission start",
     )
 
     ax.scatter(
@@ -2142,7 +2666,7 @@ def plot_3d_trajectory(
         [position[-1, 1]],
         [position[-1, 2]],
         s=60,
-        label="Final submerged state",
+        label="Final state",
     )
 
     ax.set_xlabel(
@@ -2158,19 +2682,18 @@ def plot_3d_trajectory(
     )
 
     ax.set_title(
-        "MorphoAqua - Stage 5 "
-        "Underwater 3-D Trajectory"
+        "MorphoAqua - Stage 5B-1 "
+        "Integrated Aerial-Aquatic 3-D Trajectory"
     )
 
     ax.legend()
-
     ax.grid(True)
 
     plt.tight_layout()
 
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_5_3D_trajectory.png",
+        "Stage_5B1_3D_trajectory.png",
     )
 
     plt.savefig(
@@ -2180,32 +2703,42 @@ def plot_3d_trajectory(
     )
 
     plt.show()
-
     plt.close(fig)
 
 
 # ======================================================================
-# CONTROL / ACTUATOR PLOT
+# CONTROL / MEDIUM RESPONSE PLOT
 # ======================================================================
 
-def plot_stage5_control(
-    time,
-    velocity,
-    angles,
-    desired_angles,
-    requested_thrust,
-    commanded_thrust,
-    effective_thrust,
-    torque,
-    rpm,
-    buoyancy,
-    drag,
+def plot_control_response(
+    results,
 ):
 
+    time = results["time"]
+
+    velocity = results["velocity"]
+    angles = results["angles"]
+    desired_angles = results["desired_angles"]
+
+    requested_thrust = results["requested_thrust"]
+    commanded_thrust = results["commanded_thrust"]
+    effective_thrust = results["effective_thrust"]
+
+    torque = results["torque"]
+    rpm = results["rpm"]
+
+    buoyancy = results["buoyancy"]
+    drag = results["drag"]
+
+    immersion = results["immersion"]
+    propulsion_effectiveness = (
+        results["propulsion_effectiveness"]
+    )
+
     fig, axes = plt.subplots(
-        6,
+        7,
         1,
-        figsize=(13, 19),
+        figsize=(13, 23),
         sharex=True,
     )
 
@@ -2236,7 +2769,6 @@ def plot_stage5_control(
     )
 
     axes[0].legend()
-
     axes[0].grid(True)
 
     # --------------------------------------------------------------
@@ -2315,7 +2847,7 @@ def plot_stage5_control(
     axes[2].plot(
         time,
         effective_thrust,
-        label="Effective underwater thrust",
+        label="Effective thrust",
     )
 
     axes[2].axhline(
@@ -2329,7 +2861,6 @@ def plot_stage5_control(
     )
 
     axes[2].legend()
-
     axes[2].grid(True)
 
     # --------------------------------------------------------------
@@ -2359,7 +2890,6 @@ def plot_stage5_control(
     )
 
     axes[3].legend()
-
     axes[3].grid(True)
 
     # --------------------------------------------------------------
@@ -2391,37 +2921,60 @@ def plot_stage5_control(
     axes[4].grid(True)
 
     # --------------------------------------------------------------
-    # Water forces
+    # Medium
     # --------------------------------------------------------------
 
     axes[5].plot(
+        time,
+        immersion,
+        label="Immersion fraction",
+    )
+
+    axes[5].plot(
+        time,
+        propulsion_effectiveness,
+        "--",
+        label="Propulsion effectiveness",
+    )
+
+    axes[5].set_ylabel(
+        "Immersion / effectiveness"
+    )
+
+    axes[5].legend()
+    axes[5].grid(True)
+
+    # --------------------------------------------------------------
+    # Water forces
+    # --------------------------------------------------------------
+
+    axes[6].plot(
         time,
         buoyancy,
         label="Buoyancy",
     )
 
-    axes[5].plot(
+    axes[6].plot(
         time,
         drag,
         "--",
         label="Hydrodynamic drag",
     )
 
-    axes[5].set_ylabel(
+    axes[6].set_ylabel(
         "Force (N)"
     )
 
-    axes[5].set_xlabel(
+    axes[6].set_xlabel(
         "Time (s)"
     )
 
-    axes[5].legend()
-
-    axes[5].grid(True)
+    axes[6].legend()
+    axes[6].grid(True)
 
     fig.suptitle(
-        "MorphoAqua - Stage 5 "
-        "Underwater 3-D Control and Actuator Response"
+        "MorphoAqua - Stage 5B-1 "
+        "Integrated Control, Actuation and Medium Response"
     )
 
     plt.tight_layout(
@@ -2435,7 +2988,7 @@ def plot_stage5_control(
 
     output_path = os.path.join(
         RESULTS_DIRECTORY,
-        "Stage_5_control_water_response.png",
+        "Stage_5B1_control_medium_response.png",
     )
 
     plt.savefig(
@@ -2445,7 +2998,183 @@ def plot_stage5_control(
     )
 
     plt.show()
+    plt.close(fig)
 
+
+# ======================================================================
+# MORPHOLOGY PLOT
+# ======================================================================
+
+def plot_morphology(
+    results,
+):
+
+    time = results["time"]
+
+    morphology = results["morphology"]
+    morphology_rate = results["morphology_rate"]
+
+    arm_length = results["arm_length"]
+    inertia_scale = results["inertia_scale"]
+
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(13, 8),
+        sharex=True,
+    )
+
+    axes[0].plot(
+        time,
+        arm_length,
+        label="Arm length",
+    )
+
+    axes[0].plot(
+        time,
+        morphology,
+        "--",
+        label="Morphology state",
+    )
+
+    axes[0].plot(
+        time,
+        morphology_rate,
+        ":",
+        label="Morphology rate",
+    )
+
+    axes[0].set_ylabel(
+        "Morphology / length"
+    )
+
+    axes[0].legend()
+    axes[0].grid(True)
+
+    axes[1].plot(
+        time,
+        inertia_scale,
+        label="Inertia scale",
+    )
+
+    axes[1].set_ylabel(
+        "I / I_nominal"
+    )
+
+    axes[1].set_xlabel(
+        "Time (s)"
+    )
+
+    axes[1].legend()
+    axes[1].grid(True)
+
+    fig.suptitle(
+        "MorphoAqua - Stage 5B-1 "
+        "Morphology and Time-Varying Inertia"
+    )
+
+    plt.tight_layout()
+
+    output_path = os.path.join(
+        RESULTS_DIRECTORY,
+        "Stage_5B1_morphology_inertia.png",
+    )
+
+    plt.savefig(
+        output_path,
+        dpi=200,
+        bbox_inches="tight",
+    )
+
+    plt.show()
+    plt.close(fig)
+
+
+# ======================================================================
+# DIRECTION / ACTUATOR PLOT
+# ======================================================================
+
+def plot_direction_error(
+    results,
+):
+
+    time = results["time"]
+
+    commanded_error = (
+        results["commanded_direction_error"]
+    )
+
+    actual_error = (
+        results["thrust_direction_error"]
+    )
+
+    torque_scale = (
+        results["torque_scale"]
+    )
+
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(13, 8),
+        sharex=True,
+    )
+
+    axes[0].plot(
+        time,
+        commanded_error,
+        label="Commanded direction error",
+    )
+
+    axes[0].plot(
+        time,
+        actual_error,
+        "--",
+        label="Actual thrust-direction error",
+    )
+
+    axes[0].set_ylabel(
+        "Direction error (deg)"
+    )
+
+    axes[0].legend()
+    axes[0].grid(True)
+
+    axes[1].plot(
+        time,
+        torque_scale,
+        label="Torque allocation scale",
+    )
+
+    axes[1].set_ylabel(
+        "Torque scale"
+    )
+
+    axes[1].set_xlabel(
+        "Time (s)"
+    )
+
+    axes[1].legend()
+    axes[1].grid(True)
+
+    fig.suptitle(
+        "MorphoAqua - Stage 5B-1 "
+        "Attitude Feasibility and Actuator Allocation"
+    )
+
+    plt.tight_layout()
+
+    output_path = os.path.join(
+        RESULTS_DIRECTORY,
+        "Stage_5B1_direction_actuator_response.png",
+    )
+
+    plt.savefig(
+        output_path,
+        dpi=200,
+        bbox_inches="tight",
+    )
+
+    plt.show()
     plt.close(fig)
 
 
@@ -2456,19 +3185,19 @@ def plot_stage5_control(
 def main():
 
     print(
-        "=" * 70
+        "=" * 76
     )
 
     print(
-        "MORPHOAQUA - STAGE 5"
+        "MORPHOAQUA - STAGE 5B-1"
     )
 
     print(
-        "FULLY SUBMERGED 3-D TRAJECTORY TRACKING"
+        "INTEGRATED AERIAL -> WATER -> UNDERWATER MISSION"
     )
 
     print(
-        "=" * 70
+        "=" * 76
     )
 
     print()
@@ -2478,71 +3207,73 @@ def main():
     )
 
     print(
-        "Initial state: "
-        "(0.00, 0.00, -0.60) m"
+        "0-3 s   : Aerial takeoff to Z = +2.00 m"
     )
 
     print(
-        "Smooth descent to Z = -1.00 m"
+        "3-6 s   : Compact -> extended morphology"
     )
 
     print(
-        "Submerged stabilization"
+        "6-8 s   : Extended aerial hold"
     )
 
     print(
-        "3-D trajectory to "
-        "(+0.80, +0.50, -1.20) m"
+        "8-11 s  : Extended -> compact morphology"
     )
 
     print(
-        "3-D trajectory to "
-        "(-0.60, -0.50, -0.80) m"
+        "11-14 s : Controlled descent through water interface"
     )
 
     print(
-        "Return to "
-        "(0.00, 0.00, -1.00) m"
+        "14-18 s : Submerged stabilization to Z = -1.00 m"
     )
 
     print(
-        "Final submerged stabilization: 20.0-21.0 s"
+        "18-23 s : Underwater trajectory 1"
+    )
+
+    print(
+        "23-29 s : Underwater trajectory 2"
+    )
+
+    print(
+        "29-33 s : Return to final submerged point"
+    )
+
+    print(
+        "33-35 s : Final submerged stabilization"
     )
 
     print()
 
     print(
-        "Underwater model:"
+        "Physics:"
     )
 
     print(
-        f"Water density: "
-        f"{WATER_DENSITY:.1f} kg/m^3"
+        "6-DOF rigid-body dynamics"
     )
 
     print(
-        f"Displaced volume: "
-        f"{DISPLACED_VOLUME:.6f} m^3"
+        "Morphology-dependent inertia with dI/dt compensation"
     )
 
     print(
-        f"Drag coefficient: "
-        f"{WATER_DRAG_COEFFICIENT:.2f}"
+        "Air-water immersion model"
     )
 
     print(
-        f"Reference area: "
-        f"{WATER_REFERENCE_AREA:.4f} m^2"
+        "Buoyancy + quadratic hydrodynamic drag"
     )
 
     print(
-        f"Propulsion effectiveness: "
-        f"{FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS:.2f}"
+        "Medium-dependent propulsion effectiveness"
     )
 
     print(
-        f"Compact arm ratio: "
-        f"{COMPACT_ARM_RATIO:.2f}"
+        "Motor dynamics + actuator saturation reporting"
     )
 
     print()
@@ -2552,86 +3283,27 @@ def main():
     )
 
     print(
-        "Hydrodynamic parameters are "
-        "parameterized simulation assumptions."
+        "Hydrodynamic quantities are parameterized simulation assumptions."
     )
 
     print(
-        "They are not experimentally measured "
-        "vehicle properties."
+        "Stage 5B-1 does not yet claim CFD, real sensors or learning-based control."
     )
 
     print()
-
-    print(
-        f"Simulation time: "
-        f"{STAGE5_SIMULATION_TIME:.1f} s"
-    )
-
-    print()
-
-    # --------------------------------------------------------------
-    # Run simulation
-    # --------------------------------------------------------------
 
     results = run_simulation()
 
-    (
-        time,
-        position,
-        velocity,
-        angles,
-        target_position,
-        target_velocity,
-        target_acceleration,
-        desired_angles,
-        requested_thrust,
-        commanded_thrust,
-        effective_thrust,
-        torque,
-        rpm,
-        motor_thrust,
-        buoyancy,
-        drag,
-        required_force,
-        commanded_direction_error,
-        thrust_direction_error,
-        torque_scale,
-        torque_saturation,
-        collective_clipped,
-    ) = results
-
-    # --------------------------------------------------------------
-    # Metrics
-    # --------------------------------------------------------------
-
     metrics = calculate_metrics(
-        time,
-        position,
-        velocity,
-        angles,
-        target_position,
-        requested_thrust,
-        commanded_thrust,
-        effective_thrust,
-        torque,
-        rpm,
-        motor_thrust,
-        buoyancy,
-        drag,
-        commanded_direction_error,
-        thrust_direction_error,
-        torque_scale,
-        torque_saturation,
-        collective_clipped,
+        results
     )
 
     print(
-        "STAGE 5 PERFORMANCE METRICS"
+        "STAGE 5B-1 PERFORMANCE METRICS"
     )
 
     print(
-        "-" * 70
+        "-" * 76
     )
 
     for name, value in metrics.items():
@@ -2645,35 +3317,35 @@ def main():
         ):
 
             print(
-                f"{name:<50}: "
-                f"{value}"
+                f"{name:<58}: {value}"
             )
 
         else:
 
             print(
-                f"{name:<50}: "
-                f"{value:.6f}"
+                f"{name:<58}: {value:.6f}"
             )
 
     print(
-        "-" * 70
+        "-" * 76
     )
 
     print()
 
     print(
-        "Controller configuration:"
+        "Controller:"
     )
 
     print(
-        "Position controller: "
-        "World-frame PD + analytical trajectory feedforward"
+        "Position control: world-frame PD + analytical trajectory feedforward"
     )
 
     print(
-        "Attitude controller: "
-        "Morphology-aware PD"
+        "Attitude control: morphology-aware PD + dynamic compensation"
+    )
+
+    print(
+        "Force feasibility: attitude-limit-aware force projection"
     )
 
     print(
@@ -2681,34 +3353,11 @@ def main():
     )
 
     print(
-        "Morphology: "
-        "Fixed compact underwater configuration"
+        "Morphology: compact -> extended -> compact -> compact underwater"
     )
 
     print(
-        "Rotational dynamics: "
-        "Rigid-body inertia with gyroscopic compensation"
-    )
-
-    print(
-        "Water dynamics: "
-        "Buoyancy + quadratic hydrodynamic drag"
-    )
-
-    print(
-        "Propulsion: "
-        "30% fully submerged effectiveness"
-    )
-
-    print(
-        "Rotational water effect: "
-        "Fully submerged damping"
-    )
-
-    print()
-
-    print(
-        "Stage 5 simulation completed."
+        "Medium model: air / interface / fully submerged"
     )
 
     print()
@@ -2720,54 +3369,64 @@ def main():
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_5_position_tracking.png",
+            "Stage_5B1_position_tracking.png",
         )
     )
 
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_5_3D_trajectory.png",
+            "Stage_5B1_3D_trajectory.png",
         )
     )
 
     print(
         os.path.join(
             RESULTS_DIRECTORY,
-            "Stage_5_control_water_response.png",
+            "Stage_5B1_control_medium_response.png",
+        )
+    )
+
+    print(
+        os.path.join(
+            RESULTS_DIRECTORY,
+            "Stage_5B1_morphology_inertia.png",
+        )
+    )
+
+    print(
+        os.path.join(
+            RESULTS_DIRECTORY,
+            "Stage_5B1_direction_actuator_response.png",
         )
     )
 
     plot_position_results(
-        time,
-        position,
-        target_position,
+        results
     )
 
     plot_3d_trajectory(
-        position,
-        target_position,
+        results
     )
 
-    plot_stage5_control(
-        time,
-        velocity,
-        angles,
-        desired_angles,
-        requested_thrust,
-        commanded_thrust,
-        effective_thrust,
-        torque,
-        rpm,
-        buoyancy,
-        drag,
+    plot_control_response(
+        results
     )
 
+    plot_morphology(
+        results
+    )
 
-# ======================================================================
-# ENTRY POINT
-# ======================================================================
+    plot_direction_error(
+        results
+    )
+
+    print()
+
+    print(
+        "Stage 5B-1 simulation completed."
+    )
+
 
 if __name__ == "__main__":
-
     main()
