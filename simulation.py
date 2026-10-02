@@ -1,62 +1,56 @@
 """
 ======================================================================
-MorphoAqua - Stage 5B-2
-Integrated Aerial -> Water-Entry -> Underwater Mission
+MorphoAqua - Stage 5B-3
+Simulated Sensing, GPS Loss and State Estimation
 ======================================================================
 
-Stage 5B-2 additions:
+Stage 5B-3 extends the integrated Stage 5B-2 aerial-aquatic mission
+with simulated sensing and state estimation.
 
-    - Reduced-order analytical water-entry disturbance
-    - Cross-medium propulsion interface penalty
-    - Water-entry impact metrics
-    - Impact-induced error metrics
-    - Baseline-relative impact recovery metric
-    - Dedicated water-entry response visualization
+Added:
+    - IMU-like acceleration and gyro measurements
+    - GPS-like aerial position sensing
+    - GPS degradation and loss
+    - Vision-like position sensing
+    - Vision-like attitude sensing
+    - Depth sensing during immersion
+    - Sonar-like underwater local-position sensing
+    - Sensor noise and dropout
+    - 9-state position/velocity/accelerometer-bias Kalman filter
+    - Gyro-integrated attitude estimator with visual correction
+    - Innovation gating
+    - Estimator confidence
+    - GPS-denied estimation metrics
+    - Sensor availability metrics based on scheduled opportunities
 
-Validated physical elements retained:
-
+Retained from Stage 5B-2:
     - 6-DOF rigid-body dynamics
-    - 3-D trajectory tracking
-    - in-flight morphology change
+    - continuous 3-D trajectory tracking
+    - morphology-dependent arm length
     - time-varying inertia
     - dI/dt compensation
-    - air-water interface model
+    - air-water immersion
     - buoyancy
     - quadratic hydrodynamic drag
     - medium-dependent propulsion effectiveness
-    - underwater 3-D trajectory tracking
-    - motor dynamics
+    - reduced-order water-entry impact
     - actuator saturation reporting
     - attitude-limit-aware force projection
+    - motor dynamics
 
-Important modeling note
------------------------
-This remains a numerical simulation.
+Important:
+    Sensor data are simulated numerical measurements.
+    No physical sensor hardware is claimed.
 
-Hydrodynamic and water-entry parameters are parameterized assumptions.
-They are not experimentally measured properties of a physical vehicle.
+    The accelerometer bias is defined in the body frame and estimated
+    in the same frame.
 
-The water-entry disturbance is a reduced-order analytical proxy.
-It is NOT CFD/VoF.
-
-The impact force is intentionally excluded from the controller's
-feedforward calculation and is applied only to the plant dynamics.
-
-This stage does not claim:
-
-    - full CFD water-entry slamming
-    - real sensor hardware
-    - GPS-denied state estimation
-    - MPC/RL/learning-based adaptation
-    - experimental structural/material validation
+    Stage 5B-3 does not implement adaptive/predictive control.
+    That is reserved for Stage 5B-4.
 ======================================================================
 """
 
 import os
-
-# ----------------------------------------------------------------------
-# Use a non-interactive backend so plots are written directly to files.
-# ----------------------------------------------------------------------
 
 import matplotlib
 matplotlib.use("Agg")
@@ -111,119 +105,96 @@ from motor_model import (
 
 
 # ======================================================================
-# SIMULATION CONFIGURATION
+# CONFIGURATION
 # ======================================================================
 
-STAGE5B_SIMULATION_TIME = 35.0
+SIMULATION_TIME = 35.0
+
+RESULTS_DIRECTORY = "results"
+
+os.makedirs(
+    RESULTS_DIRECTORY,
+    exist_ok=True,
+)
 
 
 # ======================================================================
 # MISSION TIMELINE
 # ======================================================================
 
-TAKEOFF_START_TIME = 0.0
-TAKEOFF_END_TIME = 3.0
+TAKEOFF_START = 0.0
+TAKEOFF_END = 3.0
 
-AERIAL_MORPHING_START_TIME = 3.0
-AERIAL_MORPHING_END_TIME = 6.0
+MORPH_OUT_START = 3.0
+MORPH_OUT_END = 6.0
 
-AERIAL_HOLD_START_TIME = 6.0
-AERIAL_HOLD_END_TIME = 8.0
+AERIAL_HOLD_START = 6.0
+AERIAL_HOLD_END = 8.0
 
-WATER_ENTRY_MORPHING_START_TIME = 8.0
-WATER_ENTRY_MORPHING_END_TIME = 11.0
+MORPH_IN_START = 8.0
+MORPH_IN_END = 11.0
 
-WATER_DESCENT_START_TIME = 11.0
-WATER_DESCENT_END_TIME = 14.0
+WATER_DESCENT_START = 11.0
+WATER_DESCENT_END = 14.0
 
-SUBMERGED_STABILIZATION_START_TIME = 14.0
-SUBMERGED_STABILIZATION_END_TIME = 18.0
+SUBMERGED_STABILIZATION_START = 14.0
+SUBMERGED_STABILIZATION_END = 18.0
 
-UNDERWATER_TRAJECTORY_1_START_TIME = 18.0
-UNDERWATER_TRAJECTORY_1_END_TIME = 23.0
+TRAJECTORY_1_START = 18.0
+TRAJECTORY_1_END = 23.0
 
-UNDERWATER_TRAJECTORY_2_START_TIME = 23.0
-UNDERWATER_TRAJECTORY_2_END_TIME = 29.0
+TRAJECTORY_2_START = 23.0
+TRAJECTORY_2_END = 29.0
 
-RETURN_START_TIME = 29.0
-RETURN_END_TIME = 33.0
+RETURN_START = 29.0
+RETURN_END = 33.0
 
-FINAL_HOLD_START_TIME = 33.0
-FINAL_HOLD_END_TIME = 35.0
-
-
-# ======================================================================
-# TARGET POSITIONS
-# ======================================================================
-
-INITIAL_POSITION = np.array(
-    [
-        0.0,
-        0.0,
-        0.0,
-    ],
-    dtype=float,
-)
-
-TAKEOFF_TARGET = np.array(
-    [
-        0.0,
-        0.0,
-        2.0,
-    ],
-    dtype=float,
-)
-
-WATER_ENTRY_TARGET = np.array(
-    [
-        0.0,
-        0.0,
-        -0.60,
-    ],
-    dtype=float,
-)
-
-UNDERWATER_HOLD_TARGET = np.array(
-    [
-        0.0,
-        0.0,
-        -1.00,
-    ],
-    dtype=float,
-)
-
-TRAJECTORY_1_TARGET = np.array(
-    [
-        0.80,
-        0.50,
-        -1.20,
-    ],
-    dtype=float,
-)
-
-TRAJECTORY_2_TARGET = np.array(
-    [
-        -0.60,
-        -0.50,
-        -0.80,
-    ],
-    dtype=float,
-)
-
-FINAL_TARGET = np.array(
-    [
-        0.0,
-        0.0,
-        -1.00,
-    ],
-    dtype=float,
-)
-
-TARGET_YAW = 0.0
+FINAL_HOLD_START = 33.0
+FINAL_HOLD_END = 35.0
 
 
 # ======================================================================
-# MORPHOLOGY MODEL
+# MISSION TARGETS
+# ======================================================================
+
+P_INITIAL = np.array(
+    [0.0, 0.0, 0.0],
+    dtype=float,
+)
+
+P_AERIAL = np.array(
+    [0.0, 0.0, 2.0],
+    dtype=float,
+)
+
+P_ENTRY = np.array(
+    [0.0, 0.0, -0.60],
+    dtype=float,
+)
+
+P_SUBMERGED = np.array(
+    [0.0, 0.0, -1.00],
+    dtype=float,
+)
+
+P_TRAJ1 = np.array(
+    [0.80, 0.50, -1.20],
+    dtype=float,
+)
+
+P_TRAJ2 = np.array(
+    [-0.60, -0.50, -0.80],
+    dtype=float,
+)
+
+P_FINAL = np.array(
+    [0.0, 0.0, -1.00],
+    dtype=float,
+)
+
+
+# ======================================================================
+# MORPHOLOGY
 # ======================================================================
 
 COMPACT_ARM_RATIO = 0.80
@@ -235,30 +206,33 @@ EXTENDED_ARM_RATIO = 1.20
 # ======================================================================
 
 WATER_SURFACE_Z = 0.0
+
 VEHICLE_HALF_HEIGHT = 0.15
 
 WATER_DENSITY = 1000.0
+
 DISPLACED_VOLUME = 0.00110
 
 WATER_DRAG_COEFFICIENT = 0.90
+
 WATER_REFERENCE_AREA = 0.025
 
 WATER_ROTATIONAL_DAMPING = 0.020
 
 
 # ======================================================================
-# CROSS-MEDIUM PROPULSION
+# PROPULSION
 # ======================================================================
 
 AIR_PROPULSION_EFFECTIVENESS = 1.00
 
-FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS = 0.30
+WATER_PROPULSION_EFFECTIVENESS = 0.30
 
 INTERFACE_PROPULSION_PENALTY = 0.015
 
 
 # ======================================================================
-# REDUCED-ORDER WATER-ENTRY DISTURBANCE
+# WATER-ENTRY IMPACT
 # ======================================================================
 
 WATER_ENTRY_IMPACT_COEFFICIENT = 0.80
@@ -273,22 +247,16 @@ WATER_ENTRY_ACTIVE_FRACTION = 0.01
 
 
 # ======================================================================
-# IMPACT RECOVERY DEFINITION
+# IMPACT RECOVERY
 # ======================================================================
 
-# Recovery threshold is defined relative to the measured impact-induced
-# tracking-error excursion rather than an arbitrary absolute distance.
-IMPACT_RECOVERY_RESIDUAL_FRACTION = 0.10
-
-# Error must remain below the recovery threshold for this duration.
-IMPACT_RECOVERY_PERSISTENCE_TIME = 0.50
-
-# Pre-impact interval used to estimate the local tracking-error baseline.
 IMPACT_BASELINE_WINDOW = 0.50
 
-# Duration after the force peak used to characterize the immediate
-# tracking-error response to the disturbance.
-IMPACT_RESPONSE_ANALYSIS_WINDOW = 2.00
+IMPACT_RESPONSE_WINDOW = 2.00
+
+IMPACT_RECOVERY_RESIDUAL_FRACTION = 0.10
+
+IMPACT_RECOVERY_PERSISTENCE_TIME = 0.50
 
 
 # ======================================================================
@@ -296,35 +264,210 @@ IMPACT_RESPONSE_ANALYSIS_WINDOW = 2.00
 # ======================================================================
 
 MAX_HORIZONTAL_ACCELERATION = 2.0
+
 MAX_VERTICAL_ACCELERATION = 2.5
 
 
 # ======================================================================
-# OUTPUT DIRECTORY
+# SENSOR MODEL
 # ======================================================================
 
-RESULTS_DIRECTORY = "results"
+SENSOR_RANDOM_SEED = 20261002
 
-os.makedirs(
-    RESULTS_DIRECTORY,
-    exist_ok=True,
+
+# ----------------------------------------------------------------------
+# IMU
+# ----------------------------------------------------------------------
+
+IMU_ACCEL_NOISE_STD = 0.08
+
+IMU_GYRO_NOISE_STD = np.deg2rad(
+    0.15
+)
+
+# Fixed BODY-FRAME accelerometer bias.
+IMU_ACCEL_BIAS_BODY = np.array(
+    [
+        0.015,
+        -0.010,
+        0.020,
+    ],
+    dtype=float,
+)
+
+IMU_GYRO_BIAS = np.deg2rad(
+    np.array(
+        [
+            0.020,
+            -0.015,
+            0.025,
+        ],
+        dtype=float,
+    )
 )
 
 
+# ----------------------------------------------------------------------
+# GPS
+# ----------------------------------------------------------------------
+
+GPS_POSITION_NOISE_STD = 0.030
+
+GPS_RATE_HZ = 10.0
+
+GPS_HANDOFF_START = 10.0
+
+GPS_HANDOFF_END = 11.0
+
+
+# ----------------------------------------------------------------------
+# Vision position
+# ----------------------------------------------------------------------
+
+VISION_POSITION_NOISE_STD = 0.015
+
+VISION_POSITION_RATE_HZ = 20.0
+
+VISION_POSITION_MAX_IMMERSION = 0.20
+
+VISION_POSITION_DROPOUT = 0.08
+
+
+# ----------------------------------------------------------------------
+# Vision attitude
+# ----------------------------------------------------------------------
+
+VISION_ATTITUDE_NOISE_STD = np.deg2rad(
+    0.50
+)
+
+VISION_ATTITUDE_RATE_HZ = 20.0
+
+VISION_ATTITUDE_MAX_IMMERSION = 0.30
+
+VISION_ATTITUDE_DROPOUT = 0.10
+
+
+# ----------------------------------------------------------------------
+# Depth
+# ----------------------------------------------------------------------
+
+DEPTH_NOISE_STD = 0.012
+
+DEPTH_RATE_HZ = 20.0
+
+DEPTH_MIN_IMMERSION = 0.05
+
+DEPTH_DROPOUT = 0.05
+
+
+# ----------------------------------------------------------------------
+# Sonar-like underwater local position
+# ----------------------------------------------------------------------
+
+SONAR_POSITION_NOISE_STD = 0.080
+
+SONAR_RATE_HZ = 10.0
+
+SONAR_MIN_IMMERSION = 0.80
+
+SONAR_DROPOUT = 0.15
+
+
 # ======================================================================
-# TRAJECTORY PROFILE
+# STATE ESTIMATOR
 # ======================================================================
 
-def smoothstep_profile(u):
-    """
-    Quintic smoothstep profile.
+ESTIMATOR_ACCEL_PROCESS_STD = 0.30
 
-    Returns:
-        s
-        ds/du
-        d2s/du2
-    """
+ESTIMATOR_INITIAL_POSITION_STD = 0.020
 
+ESTIMATOR_INITIAL_VELOCITY_STD = 0.050
+
+ESTIMATOR_INITIAL_BIAS_STD = 0.030
+
+ESTIMATOR_BIAS_RANDOM_WALK_STD = 0.002
+
+POSITION_INNOVATION_GATE = 25.0
+
+
+# ----------------------------------------------------------------------
+# Attitude estimator
+# ----------------------------------------------------------------------
+
+ATTITUDE_VISUAL_BLEND = 0.18
+
+ATTITUDE_GYRO_BIAS_GAIN = 0.015
+
+
+# ======================================================================
+# MATH HELPERS
+# ======================================================================
+
+def wrap_angle_vector(
+    values,
+):
+    return np.arctan2(
+        np.sin(values),
+        np.cos(values),
+    )
+
+
+def euler_rate_matrix(
+    angles,
+):
+    phi = float(
+        angles[0]
+    )
+
+    theta = float(
+        angles[1]
+    )
+
+    cos_theta = np.cos(
+        theta
+    )
+
+    if abs(
+        cos_theta
+    ) < 1e-5:
+
+        cos_theta = 1e-5
+
+    tan_theta = (
+        np.sin(theta)
+        / cos_theta
+    )
+
+    return np.array(
+        [
+            [
+                1.0,
+                np.sin(phi) * tan_theta,
+                np.cos(phi) * tan_theta,
+            ],
+            [
+                0.0,
+                np.cos(phi),
+                -np.sin(phi),
+            ],
+            [
+                0.0,
+                np.sin(phi) / cos_theta,
+                np.cos(phi) / cos_theta,
+            ],
+        ],
+        dtype=float,
+    )
+
+
+# ======================================================================
+# SMOOTH TRAJECTORY
+# ======================================================================
+
+def smoothstep(
+    u,
+):
     u = np.clip(
         u,
         0.0,
@@ -358,41 +501,35 @@ def smoothstep_profile(u):
 
 def interpolate_segment(
     t,
-    start_time,
-    end_time,
-    start_position,
-    end_position,
+    t0,
+    t1,
+    p0,
+    p1,
 ):
-    """
-    Quintic smooth interpolation between two 3-D points.
-    """
-
     duration = (
-        end_time
-        - start_time
+        t1 - t0
     )
 
     if duration <= 0.0:
+
         raise ValueError(
-            "Trajectory segment duration must be positive."
+            "Trajectory duration must be positive."
         )
 
     u = (
-        t
-        - start_time
+        t - t0
     ) / duration
 
-    s, ds, d2s = (
-        smoothstep_profile(u)
+    s, ds, d2s = smoothstep(
+        u
     )
 
     delta = (
-        end_position
-        - start_position
+        p1 - p0
     )
 
     position = (
-        start_position
+        p0
         + delta * s
     )
 
@@ -415,22 +552,128 @@ def interpolate_segment(
     )
 
 
+def periodic_update(
+    t,
+    rate_hz,
+):
+    if rate_hz <= 0.0:
+
+        return False
+
+    period = (
+        1.0
+        / rate_hz
+    )
+
+    phase = np.mod(
+        t,
+        period,
+    )
+
+    tolerance = max(
+        0.51 * DT,
+        1e-9,
+    )
+
+    return bool(
+        phase <= tolerance
+        or
+        abs(
+            phase - period
+        ) <= tolerance
+    )
+
+
+# ======================================================================
+# MISSION TRAJECTORY
+# ======================================================================
+
+def mission_trajectory(
+    t,
+):
+    if t < TAKEOFF_END:
+
+        return interpolate_segment(
+            t,
+            TAKEOFF_START,
+            TAKEOFF_END,
+            P_INITIAL,
+            P_AERIAL,
+        )
+
+    if t < WATER_DESCENT_START:
+
+        return (
+            P_AERIAL.copy(),
+            np.zeros(3),
+            np.zeros(3),
+        )
+
+    if t < WATER_DESCENT_END:
+
+        return interpolate_segment(
+            t,
+            WATER_DESCENT_START,
+            WATER_DESCENT_END,
+            P_AERIAL,
+            P_ENTRY,
+        )
+
+    if t < SUBMERGED_STABILIZATION_END:
+
+        return interpolate_segment(
+            t,
+            SUBMERGED_STABILIZATION_START,
+            SUBMERGED_STABILIZATION_END,
+            P_ENTRY,
+            P_SUBMERGED,
+        )
+
+    if t < TRAJECTORY_1_END:
+
+        return interpolate_segment(
+            t,
+            TRAJECTORY_1_START,
+            TRAJECTORY_1_END,
+            P_SUBMERGED,
+            P_TRAJ1,
+        )
+
+    if t < TRAJECTORY_2_END:
+
+        return interpolate_segment(
+            t,
+            TRAJECTORY_2_START,
+            TRAJECTORY_2_END,
+            P_TRAJ1,
+            P_TRAJ2,
+        )
+
+    if t < RETURN_END:
+
+        return interpolate_segment(
+            t,
+            RETURN_START,
+            RETURN_END,
+            P_TRAJ2,
+            P_FINAL,
+        )
+
+    return (
+        P_FINAL.copy(),
+        np.zeros(3),
+        np.zeros(3),
+    )
+
+
 # ======================================================================
 # MORPHOLOGY
 # ======================================================================
 
-def morphology_profile(t):
-    """
-    Morphology timeline:
-
-        0-3 s   compact
-        3-6 s   compact -> extended
-        6-8 s   extended
-        8-11 s  extended -> compact
-        >11 s   compact
-    """
-
-    if t < AERIAL_MORPHING_START_TIME:
+def morphology_profile(
+    t,
+):
+    if t < MORPH_OUT_START:
 
         return (
             0.0,
@@ -438,38 +681,35 @@ def morphology_profile(t):
             0.0,
         )
 
-    if t < AERIAL_MORPHING_END_TIME:
+    if t < MORPH_OUT_END:
 
         u = (
-            t
-            - AERIAL_MORPHING_START_TIME
+            t - MORPH_OUT_START
         ) / (
-            AERIAL_MORPHING_END_TIME
-            - AERIAL_MORPHING_START_TIME
+            MORPH_OUT_END
+            - MORPH_OUT_START
         )
 
-        s, ds, d2s = (
-            smoothstep_profile(u)
+        s, ds, d2s = smoothstep(
+            u
         )
 
         duration = (
-            AERIAL_MORPHING_END_TIME
-            - AERIAL_MORPHING_START_TIME
+            MORPH_OUT_END
+            - MORPH_OUT_START
         )
 
         return (
             float(s),
             float(
-                ds
-                / duration
+                ds / duration
             ),
             float(
-                d2s
-                / duration**2
+                d2s / duration**2
             ),
         )
 
-    if t < WATER_ENTRY_MORPHING_START_TIME:
+    if t < MORPH_IN_START:
 
         return (
             1.0,
@@ -477,37 +717,31 @@ def morphology_profile(t):
             0.0,
         )
 
-    if t < WATER_ENTRY_MORPHING_END_TIME:
+    if t < MORPH_IN_END:
 
         u = (
-            t
-            - WATER_ENTRY_MORPHING_START_TIME
+            t - MORPH_IN_START
         ) / (
-            WATER_ENTRY_MORPHING_END_TIME
-            - WATER_ENTRY_MORPHING_START_TIME
+            MORPH_IN_END
+            - MORPH_IN_START
         )
 
-        s, ds, d2s = (
-            smoothstep_profile(u)
+        s, ds, d2s = smoothstep(
+            u
         )
 
         duration = (
-            WATER_ENTRY_MORPHING_END_TIME
-            - WATER_ENTRY_MORPHING_START_TIME
+            MORPH_IN_END
+            - MORPH_IN_START
         )
 
         return (
+            float(1.0 - s),
             float(
-                1.0
-                - s
+                -ds / duration
             ),
             float(
-                -ds
-                / duration
-            ),
-            float(
-                -d2s
-                / duration**2
+                -d2s / duration**2
             ),
         )
 
@@ -518,16 +752,9 @@ def morphology_profile(t):
     )
 
 
-def morphology_parameters(t):
-    """
-    Calculate time-varying arm length and inertia.
-
-        I(t) = I0 * arm_ratio^2
-
-        dI/dt =
-            I0 * 2 * arm_ratio * d(arm_ratio)/dt
-    """
-
+def morphology_parameters(
+    t,
+):
     (
         morphology_state,
         morphology_rate,
@@ -536,32 +763,28 @@ def morphology_parameters(t):
         t
     )
 
+    morphology_delta = (
+        EXTENDED_ARM_RATIO
+        - COMPACT_ARM_RATIO
+    )
+
     arm_ratio = (
         COMPACT_ARM_RATIO
-        + morphology_state
-        * (
-            EXTENDED_ARM_RATIO
-            - COMPACT_ARM_RATIO
-        )
+        + morphology_delta
+        * morphology_state
     )
 
     arm_ratio_rate = (
-        morphology_rate
-        * (
-            EXTENDED_ARM_RATIO
-            - COMPACT_ARM_RATIO
-        )
+        morphology_delta
+        * morphology_rate
     )
 
     arm_ratio_acceleration = (
-        morphology_acceleration
-        * (
-            EXTENDED_ARM_RATIO
-            - COMPACT_ARM_RATIO
-        )
+        morphology_delta
+        * morphology_acceleration
     )
 
-    current_arm_length = (
+    arm_length = (
         ARM_LENGTH
         * arm_ratio
     )
@@ -582,18 +805,16 @@ def morphology_parameters(t):
 
     inertia_rate = (
         INERTIA
-        * (
-            2.0
-            * arm_ratio
-            * arm_ratio_rate
-        )
+        * 2.0
+        * arm_ratio
+        * arm_ratio_rate
     )
 
     return (
         morphology_state,
         morphology_rate,
         morphology_acceleration,
-        current_arm_length,
+        arm_length,
         arm_length_rate,
         current_inertia,
         inertia_rate,
@@ -603,101 +824,87 @@ def morphology_parameters(t):
 
 
 # ======================================================================
-# IMMERSION MODEL
+# IMMERSION
 # ======================================================================
 
-def calculate_immersion_fraction(z):
-    """
-    Continuous immersion fraction:
-
-        0.0 = fully above water
-        0.5 = approximately half immersed
-        1.0 = fully submerged
-    """
-
-    upper_transition = (
+def immersion_fraction(
+    z,
+):
+    upper = (
         WATER_SURFACE_Z
         + VEHICLE_HALF_HEIGHT
     )
 
-    lower_transition = (
+    lower = (
         WATER_SURFACE_Z
         - VEHICLE_HALF_HEIGHT
     )
 
-    if z >= upper_transition:
+    if z >= upper:
+
         return 0.0
 
-    if z <= lower_transition:
+    if z <= lower:
+
         return 1.0
 
     u = (
-        upper_transition
-        - z
+        upper - z
     ) / (
-        upper_transition
-        - lower_transition
+        upper - lower
     )
 
-    s, _, _ = (
-        smoothstep_profile(u)
+    s, _, _ = smoothstep(
+        u
     )
 
-    return float(s)
+    return float(
+        s
+    )
 
 
-def calculate_immersion_rate(
+def immersion_rate(
     z,
     vertical_velocity,
 ):
-    """
-    Analytical derivative of immersion fraction.
-    """
-
-    upper_transition = (
+    upper = (
         WATER_SURFACE_Z
         + VEHICLE_HALF_HEIGHT
     )
 
-    lower_transition = (
+    lower = (
         WATER_SURFACE_Z
         - VEHICLE_HALF_HEIGHT
     )
 
     if (
-        z >= upper_transition
-        or z <= lower_transition
+        z >= upper
+        or
+        z <= lower
     ):
 
         return 0.0
 
     u = (
-        upper_transition
-        - z
+        upper - z
     ) / (
-        upper_transition
-        - lower_transition
+        upper - lower
     )
 
-    _, ds_du, _ = (
-        smoothstep_profile(u)
+    _, ds_du, _ = smoothstep(
+        u
     )
 
     du_dz = (
         -1.0
         / (
-            upper_transition
-            - lower_transition
+            upper - lower
         )
     )
 
-    d_immersion_dz = (
+    return float(
         ds_du
         * du_dz
-    )
-
-    return float(
-        d_immersion_dz
         * vertical_velocity
     )
 
@@ -706,14 +913,12 @@ def calculate_immersion_rate(
 # MEDIUM EFFECTS
 # ======================================================================
 
-def calculate_medium_effects(
+def medium_effects(
     position,
     velocity,
 ):
-    immersion = (
-        calculate_immersion_fraction(
-            position[2]
-        )
+    immersion = immersion_fraction(
+        position[2]
     )
 
     buoyancy_magnitude = (
@@ -728,7 +933,8 @@ def calculate_medium_effects(
             0.0,
             0.0,
             buoyancy_magnitude,
-        ]
+        ],
+        dtype=float,
     )
 
     speed = np.linalg.norm(
@@ -737,7 +943,8 @@ def calculate_medium_effects(
 
     if (
         immersion > 0.0
-        and speed > 1e-12
+        and
+        speed > 1e-12
     ):
 
         drag_magnitude = (
@@ -759,25 +966,24 @@ def calculate_medium_effects(
 
         drag_magnitude = 0.0
 
-        drag_force = np.zeros(3)
+        drag_force = np.zeros(
+            3
+        )
 
-    # Air -> water effectiveness.
     base_effectiveness = (
         AIR_PROPULSION_EFFECTIVENESS
         - immersion
         * (
             AIR_PROPULSION_EFFECTIVENESS
-            - FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS
+            - WATER_PROPULSION_EFFECTIVENESS
         )
     )
 
-    # Additional loss exists only at the interface.
     interface_factor = (
         4.0
         * immersion
         * (
-            1.0
-            - immersion
+            1.0 - immersion
         )
     )
 
@@ -787,7 +993,7 @@ def calculate_medium_effects(
             INTERFACE_PROPULSION_PENALTY
             * interface_factor
         ),
-        FULLY_SUBMERGED_PROPULSION_EFFECTIVENESS,
+        WATER_PROPULSION_EFFECTIVENESS,
         AIR_PROPULSION_EFFECTIVENESS,
     )
 
@@ -795,10 +1001,8 @@ def calculate_medium_effects(
         immersion,
         buoyancy_force,
         drag_force,
-        drag_magnitude,
-        float(
-            propulsion_effectiveness
-        ),
+        float(drag_magnitude),
+        float(propulsion_effectiveness),
     )
 
 
@@ -806,41 +1010,15 @@ def calculate_medium_effects(
 # WATER-ENTRY IMPACT
 # ======================================================================
 
-def calculate_water_entry_impact(
+def water_entry_impact(
     t,
     position,
     velocity,
 ):
-    """
-    Reduced-order analytical water-entry disturbance.
-
-        F_impact =
-            0.5 * rho * C_impact * A_entry * Vn^2 * activation
-
-    where:
-
-        Vn =
-            max(-Vz, 0)
-
-        activation =
-            clip(
-                immersion_rate
-                * impact_time_scale,
-                0,
-                1
-            )
-
-    The disturbance acts upward because it opposes downward entry.
-
-    It is active ONLY during the intended 11-14 s water-entry phase.
-
-    It is NOT supplied to the controller.
-    """
-
     if not (
-        WATER_DESCENT_START_TIME
+        WATER_DESCENT_START
         <= t
-        < WATER_DESCENT_END_TIME
+        < WATER_DESCENT_END
     ):
 
         return (
@@ -855,43 +1033,38 @@ def calculate_water_entry_impact(
         position[2]
     )
 
-    vertical_velocity = float(
+    vz = float(
         velocity[2]
     )
 
-    immersion = (
-        calculate_immersion_fraction(
-            z
-        )
+    immersion = immersion_fraction(
+        z
     )
 
-    immersion_rate = (
-        calculate_immersion_rate(
-            z,
-            vertical_velocity,
-        )
+    entry_rate = immersion_rate(
+        z,
+        vz,
     )
 
     normal_speed = max(
-        -vertical_velocity,
+        -vz,
         0.0,
     )
 
-    in_interface = (
+    interface_active = (
         immersion
         > WATER_ENTRY_ACTIVE_FRACTION
         and
         immersion
-        < (
-            1.0
-            - WATER_ENTRY_ACTIVE_FRACTION
-        )
+        <
+        1.0
+        - WATER_ENTRY_ACTIVE_FRACTION
     )
 
     active = (
-        in_interface
+        interface_active
         and
-        immersion_rate > 0.0
+        entry_rate > 0.0
         and
         normal_speed
         >= WATER_ENTRY_MIN_NORMAL_SPEED
@@ -904,14 +1077,14 @@ def calculate_water_entry_impact(
             0.0,
             normal_speed,
             max(
-                immersion_rate,
+                entry_rate,
                 0.0,
             ),
             False,
         )
 
     activation = np.clip(
-        immersion_rate
+        entry_rate
         * WATER_ENTRY_IMPACT_TIME_SCALE,
         0.0,
         1.0,
@@ -931,187 +1104,1248 @@ def calculate_water_entry_impact(
             0.0,
             0.0,
             impact_magnitude,
-        ]
+        ],
+        dtype=float,
     )
 
     return (
         impact_force,
-        float(
-            impact_magnitude
-        ),
-        float(
-            normal_speed
-        ),
-        float(
-            immersion_rate
-        ),
+        float(impact_magnitude),
+        float(normal_speed),
+        float(entry_rate),
         True,
     )
 
 
 # ======================================================================
-# INTEGRATED STAGE 5B REFERENCE TRAJECTORY
+# SENSOR SIMULATOR
 # ======================================================================
 
-def stage5b_trajectory(t):
-    """
-    Exact integrated 35 s mission.
+class SensorSimulator:
 
-        0-3 s:
-            Aerial takeoff
-            (0,0,0) -> (0,0,+2.0)
-
-        3-6 s:
-            Morphology compact -> extended
-
-        6-8 s:
-            Extended aerial hold
-
-        8-11 s:
-            Morphology extended -> compact
-            Position remains at +2.0 m
-
-        11-14 s:
-            Controlled descent through air-water interface
-            (0,0,+2.0) -> (0,0,-0.60)
-
-        14-18 s:
-            Submerged stabilization
-            (0,0,-0.60) -> (0,0,-1.00)
-
-        18-23 s:
-            Underwater trajectory 1
-            (0,0,-1.00) -> (+0.80,+0.50,-1.20)
-
-        23-29 s:
-            Underwater trajectory 2
-            (+0.80,+0.50,-1.20) -> (-0.60,-0.50,-0.80)
-
-        29-33 s:
-            Return
-            (-0.60,-0.50,-0.80) -> (0,0,-1.00)
-
-        33-35 s:
-            Final stabilization
-    """
-
-    # --------------------------------------------------------------
-    # 0-3 s: takeoff
-    # --------------------------------------------------------------
-
-    if t < TAKEOFF_END_TIME:
-
-        return interpolate_segment(
-            t,
-            TAKEOFF_START_TIME,
-            TAKEOFF_END_TIME,
-            INITIAL_POSITION,
-            TAKEOFF_TARGET,
+    def __init__(
+        self,
+        seed=SENSOR_RANDOM_SEED,
+    ):
+        self.rng = (
+            np.random.default_rng(
+                seed
+            )
         )
 
-    # --------------------------------------------------------------
-    # 3-11 s: aerial position hold
-    #
-    # Morphology changes internally, but position remains at +2.0 m.
-    # --------------------------------------------------------------
+    def available(
+        self,
+        probability,
+    ):
+        return bool(
+            self.rng.random()
+            <=
+            np.clip(
+                probability,
+                0.0,
+                1.0,
+            )
+        )
 
-    if t < WATER_DESCENT_START_TIME:
+    def gps_probability(
+        self,
+        t,
+        immersion,
+    ):
+        if immersion > 0.05:
+
+            return 0.0
+
+        if t < GPS_HANDOFF_START:
+
+            return 1.0
+
+        if t < GPS_HANDOFF_END:
+
+            fraction = (
+                t
+                - GPS_HANDOFF_START
+            ) / (
+                GPS_HANDOFF_END
+                - GPS_HANDOFF_START
+            )
+
+            return float(
+                1.0
+                - fraction
+            )
+
+        return 0.0
+
+    def measure(
+        self,
+        t,
+        true_position,
+        true_velocity,
+        true_angles,
+        true_angular_rates,
+        true_acceleration,
+        immersion,
+    ):
+        gravity_vector = np.array(
+            [
+                0.0,
+                0.0,
+                -GRAVITY,
+            ],
+            dtype=float,
+        )
+
+        true_rotation = (
+            rotation_matrix(
+                true_angles[0],
+                true_angles[1],
+                true_angles[2],
+            )
+        )
+
+        # ==============================================================
+        # IMU
+        # ==============================================================
+
+        specific_force_body = (
+            true_rotation.T
+            @ (
+                true_acceleration
+                - gravity_vector
+            )
+        )
+
+        imu_acceleration = (
+            specific_force_body
+            + IMU_ACCEL_BIAS_BODY
+            + self.rng.normal(
+                0.0,
+                IMU_ACCEL_NOISE_STD,
+                3,
+            )
+        )
+
+        imu_gyro = (
+            true_angular_rates
+            + IMU_GYRO_BIAS
+            + self.rng.normal(
+                0.0,
+                IMU_GYRO_NOISE_STD,
+                3,
+            )
+        )
+
+        # ==============================================================
+        # GPS
+        # ==============================================================
+
+        gps_probability = (
+            self.gps_probability(
+                t,
+                immersion,
+            )
+        )
+
+        gps_available = (
+            periodic_update(
+                t,
+                GPS_RATE_HZ,
+            )
+            and
+            self.available(
+                gps_probability
+            )
+        )
+
+        gps_position = None
+
+        if gps_available:
+
+            gps_position = (
+                true_position
+                + self.rng.normal(
+                    0.0,
+                    GPS_POSITION_NOISE_STD,
+                    3,
+                )
+            )
+
+        # ==============================================================
+        # Vision position
+        # ==============================================================
+
+        if (
+            immersion
+            <=
+            VISION_POSITION_MAX_IMMERSION
+        ):
+
+            vision_probability = (
+                1.0
+                - VISION_POSITION_DROPOUT
+            )
+
+            if immersion > 0.01:
+
+                vision_probability *= 0.70
+
+        else:
+
+            vision_probability = 0.0
+
+        vision_position_available = (
+            periodic_update(
+                t,
+                VISION_POSITION_RATE_HZ,
+            )
+            and
+            self.available(
+                vision_probability
+            )
+        )
+
+        vision_position = None
+
+        if vision_position_available:
+
+            vision_position = (
+                true_position
+                + self.rng.normal(
+                    0.0,
+                    VISION_POSITION_NOISE_STD,
+                    3,
+                )
+            )
+
+        # ==============================================================
+        # Vision attitude
+        # ==============================================================
+
+        if (
+            immersion
+            <=
+            VISION_ATTITUDE_MAX_IMMERSION
+        ):
+
+            attitude_probability = (
+                1.0
+                - VISION_ATTITUDE_DROPOUT
+            )
+
+            if immersion > 0.05:
+
+                attitude_probability *= 0.60
+
+        else:
+
+            attitude_probability = 0.0
+
+        vision_attitude_available = (
+            periodic_update(
+                t,
+                VISION_ATTITUDE_RATE_HZ,
+            )
+            and
+            self.available(
+                attitude_probability
+            )
+        )
+
+        vision_attitude = None
+
+        if vision_attitude_available:
+
+            vision_attitude = wrap_angle_vector(
+                true_angles
+                + self.rng.normal(
+                    0.0,
+                    VISION_ATTITUDE_NOISE_STD,
+                    3,
+                )
+            )
+
+        # ==============================================================
+        # Depth
+        # ==============================================================
+
+        depth_available = (
+            periodic_update(
+                t,
+                DEPTH_RATE_HZ,
+            )
+            and
+            immersion
+            >= DEPTH_MIN_IMMERSION
+            and
+            self.available(
+                1.0
+                - DEPTH_DROPOUT
+            )
+        )
+
+        depth = None
+
+        if depth_available:
+
+            depth = float(
+                true_position[2]
+                + self.rng.normal(
+                    0.0,
+                    DEPTH_NOISE_STD,
+                )
+            )
+
+        # ==============================================================
+        # Sonar-like underwater position
+        # ==============================================================
+
+        sonar_available = (
+            periodic_update(
+                t,
+                SONAR_RATE_HZ,
+            )
+            and
+            immersion
+            >= SONAR_MIN_IMMERSION
+            and
+            self.available(
+                1.0
+                - SONAR_DROPOUT
+            )
+        )
+
+        sonar_position = None
+
+        if sonar_available:
+
+            sonar_position = (
+                true_position
+                + self.rng.normal(
+                    0.0,
+                    SONAR_POSITION_NOISE_STD,
+                    3,
+                )
+            )
+
+        return {
+            "imu_acceleration":
+                imu_acceleration,
+
+            "imu_gyro":
+                imu_gyro,
+
+            "gps_available":
+                gps_available,
+
+            "gps_position":
+                gps_position,
+
+            "vision_position_available":
+                vision_position_available,
+
+            "vision_position":
+                vision_position,
+
+            "vision_attitude_available":
+                vision_attitude_available,
+
+            "vision_attitude":
+                vision_attitude,
+
+            "depth_available":
+                depth_available,
+
+            "depth":
+                depth,
+
+            "sonar_available":
+                sonar_available,
+
+            "sonar_position":
+                sonar_position,
+        }
+
+
+# ======================================================================
+# 9-STATE POSITION / VELOCITY / BODY-FRAME ACCELERATION-BIAS KF
+# ======================================================================
+
+class PositionVelocityBiasKalmanFilter:
+    """
+    State:
+
+        [px, py, pz,
+         vx, vy, vz,
+         bax, bay, baz]
+
+    The accelerometer bias is defined in the BODY FRAME.
+
+    Measurement model:
+
+        a_measured_body
+            =
+        a_true_body
+            + b_a_body
+            + noise
+
+    Therefore:
+
+        a_world =
+            R * (a_measured_body - b_a_body)
+            + g
+    """
+
+    def __init__(
+        self,
+    ):
+        self.state = np.zeros(
+            9,
+            dtype=float,
+        )
+
+        self.P = np.diag(
+            [
+                ESTIMATOR_INITIAL_POSITION_STD**2,
+                ESTIMATOR_INITIAL_POSITION_STD**2,
+                ESTIMATOR_INITIAL_POSITION_STD**2,
+
+                ESTIMATOR_INITIAL_VELOCITY_STD**2,
+                ESTIMATOR_INITIAL_VELOCITY_STD**2,
+                ESTIMATOR_INITIAL_VELOCITY_STD**2,
+
+                ESTIMATOR_INITIAL_BIAS_STD**2,
+                ESTIMATOR_INITIAL_BIAS_STD**2,
+                ESTIMATOR_INITIAL_BIAS_STD**2,
+            ]
+        )
+
+    @property
+    def position(
+        self,
+    ):
+        return self.state[
+            :3
+        ].copy()
+
+    @property
+    def velocity(
+        self,
+    ):
+        return self.state[
+            3:6
+        ].copy()
+
+    @property
+    def acceleration_bias_body(
+        self,
+    ):
+        return self.state[
+            6:9
+        ].copy()
+
+    def predict(
+        self,
+        acceleration_body,
+        body_to_world_rotation,
+        dt,
+    ):
+        R = np.asarray(
+            body_to_world_rotation,
+            dtype=float,
+        )
+
+        I3 = np.eye(
+            3
+        )
+
+        half_dt_squared = (
+            0.5
+            * dt**2
+        )
+
+        # --------------------------------------------------------------
+        # State transition matrix.
+        #
+        # Bias is represented in body coordinates.
+        # --------------------------------------------------------------
+
+        F = np.eye(
+            9
+        )
+
+        F[
+            :3,
+            3:6
+        ] = (
+            I3
+            * dt
+        )
+
+        F[
+            :3,
+            6:9
+        ] = (
+            -half_dt_squared
+            * R
+        )
+
+        F[
+            3:6,
+            6:9
+        ] = (
+            -dt
+            * R
+        )
+
+        # --------------------------------------------------------------
+        # Input mapping
+        # --------------------------------------------------------------
+
+        G = np.zeros(
+            (
+                9,
+                3,
+            )
+        )
+
+        G[
+            :3,
+            :
+        ] = (
+            half_dt_squared
+            * R
+        )
+
+        G[
+            3:6,
+            :
+        ] = (
+            dt
+            * R
+        )
+
+        gravity = np.array(
+            [
+                0.0,
+                0.0,
+                -GRAVITY,
+            ]
+        )
+
+        bias_body = (
+            self.state[
+                6:9
+            ]
+        )
+
+        unbiased_acceleration_world = (
+            R
+            @ (
+                acceleration_body
+                - bias_body
+            )
+        )
+
+        acceleration_world = (
+            unbiased_acceleration_world
+            + gravity
+        )
+
+        # --------------------------------------------------------------
+        # Nonlinear-free state propagation
+        # --------------------------------------------------------------
+
+        self.state[
+            :3
+        ] = (
+            self.state[
+                :3
+            ]
+            + self.state[
+                3:6
+            ]
+            * dt
+            + 0.5
+            * acceleration_world
+            * dt**2
+        )
+
+        self.state[
+            3:6
+        ] = (
+            self.state[
+                3:6
+            ]
+            + acceleration_world
+            * dt
+        )
+
+        # --------------------------------------------------------------
+        # Covariance
+        # --------------------------------------------------------------
+
+        Q_acc = (
+            ESTIMATOR_ACCEL_PROCESS_STD**2
+            * (
+                G
+                @ G.T
+            )
+        )
+
+        Q_bias = np.zeros(
+            (
+                9,
+                9,
+            )
+        )
+
+        Q_bias[
+            6:9,
+            6:9
+        ] = (
+            I3
+            * (
+                ESTIMATOR_BIAS_RANDOM_WALK_STD**2
+                * dt
+            )
+        )
+
+        self.P = (
+            F
+            @ self.P
+            @ F.T
+            + Q_acc
+            + Q_bias
+        )
+
+        self.P = (
+            0.5
+            * (
+                self.P
+                + self.P.T
+            )
+        )
+
+    def update_position(
+        self,
+        measurement,
+        measurement_std,
+    ):
+        H = np.zeros(
+            (
+                3,
+                9,
+            )
+        )
+
+        H[
+            :,
+            :3
+        ] = np.eye(
+            3
+        )
+
+        R = (
+            np.eye(3)
+            * measurement_std**2
+        )
+
+        innovation = (
+            measurement
+            - H
+            @ self.state
+        )
+
+        S = (
+            H
+            @ self.P
+            @ H.T
+            + R
+        )
+
+        try:
+
+            S_inv = np.linalg.inv(
+                S
+            )
+
+        except np.linalg.LinAlgError:
+
+            return False
+
+        mahalanobis = float(
+            innovation.T
+            @ S_inv
+            @ innovation
+        )
+
+        if (
+            mahalanobis
+            >
+            POSITION_INNOVATION_GATE
+        ):
+
+            return False
+
+        K = (
+            self.P
+            @ H.T
+            @ S_inv
+        )
+
+        self.state = (
+            self.state
+            + K
+            @ innovation
+        )
+
+        I9 = np.eye(
+            9
+        )
+
+        IKH = (
+            I9
+            - K
+            @ H
+        )
+
+        # Joseph form
+        self.P = (
+            IKH
+            @ self.P
+            @ IKH.T
+            + K
+            @ R
+            @ K.T
+        )
+
+        self.P = (
+            0.5
+            * (
+                self.P
+                + self.P.T
+            )
+        )
+
+        return True
+
+    def update_depth(
+        self,
+        measurement,
+        measurement_std,
+    ):
+        H = np.zeros(
+            (
+                1,
+                9,
+            )
+        )
+
+        H[
+            0,
+            2
+        ] = 1.0
+
+        R = np.array(
+            [
+                [
+                    measurement_std**2
+                ]
+            ]
+        )
+
+        innovation = np.array(
+            [
+                measurement
+                - self.state[
+                    2
+                ]
+            ]
+        )
+
+        S = (
+            H
+            @ self.P
+            @ H.T
+            + R
+        )
+
+        try:
+
+            S_inv = np.linalg.inv(
+                S
+            )
+
+        except np.linalg.LinAlgError:
+
+            return False
+
+        mahalanobis = float(
+            innovation.T
+            @ S_inv
+            @ innovation
+        )
+
+        if (
+            mahalanobis
+            >
+            POSITION_INNOVATION_GATE
+        ):
+
+            return False
+
+        K = (
+            self.P
+            @ H.T
+            @ S_inv
+        )
+
+        self.state = (
+            self.state
+            + (
+                K
+                @ innovation
+            ).reshape(
+                -1
+            )
+        )
+
+        I9 = np.eye(
+            9
+        )
+
+        IKH = (
+            I9
+            - K
+            @ H
+        )
+
+        self.P = (
+            IKH
+            @ self.P
+            @ IKH.T
+            + K
+            @ R
+            @ K.T
+        )
+
+        self.P = (
+            0.5
+            * (
+                self.P
+                + self.P.T
+            )
+        )
+
+        return True
+
+    def confidence(
+        self,
+    ):
+        position_variance = float(
+            np.trace(
+                self.P[
+                    :3,
+                    :3
+                ]
+            )
+        )
+
+        reference_variance = (
+            3.0
+            * 0.25**2
+        )
+
+        confidence = np.exp(
+            -position_variance
+            / reference_variance
+        )
+
+        return float(
+            np.clip(
+                confidence,
+                0.0,
+                1.0,
+            )
+        )
+
+
+# ======================================================================
+# ATTITUDE ESTIMATOR
+# ======================================================================
+
+class AttitudeEstimator:
+
+    def __init__(
+        self,
+    ):
+        self.angles = np.zeros(
+            3
+        )
+
+        self.gyro_bias = np.zeros(
+            3
+        )
+
+        self.angular_rates = np.zeros(
+            3
+        )
+
+    def predict(
+        self,
+        gyro_measurement,
+        dt,
+    ):
+        corrected_rates = (
+            gyro_measurement
+            - self.gyro_bias
+        )
+
+        self.angular_rates = (
+            corrected_rates.copy()
+        )
+
+        self.angles += (
+            euler_rate_matrix(
+                self.angles
+            )
+            @ corrected_rates
+            * dt
+        )
+
+        self.angles = (
+            wrap_angle_vector(
+                self.angles
+            )
+        )
+
+    def update_visual_attitude(
+        self,
+        measurement,
+    ):
+        innovation = (
+            wrap_angle_vector(
+                measurement
+                - self.angles
+            )
+        )
+
+        self.angles = (
+            wrap_angle_vector(
+                self.angles
+                + ATTITUDE_VISUAL_BLEND
+                * innovation
+            )
+        )
+
+        self.gyro_bias += (
+            ATTITUDE_GYRO_BIAS_GAIN
+            * innovation
+        )
+
+        return innovation
+
+
+# ======================================================================
+# MULTI-MODAL ESTIMATOR
+# ======================================================================
+
+class MultiModalStateEstimator:
+
+    def __init__(
+        self,
+    ):
+        self.position_filter = (
+            PositionVelocityBiasKalmanFilter()
+        )
+
+        self.attitude_filter = (
+            AttitudeEstimator()
+        )
+
+        self.accepted_updates = {
+            "gps": 0,
+            "vision_position": 0,
+            "depth": 0,
+            "sonar": 0,
+            "vision_attitude": 0,
+        }
+
+        self.rejected_updates = {
+            "gps": 0,
+            "vision_position": 0,
+            "depth": 0,
+            "sonar": 0,
+            "vision_attitude": 0,
+        }
+
+    @property
+    def position(
+        self,
+    ):
+        return (
+            self.position_filter.position
+        )
+
+    @property
+    def velocity(
+        self,
+    ):
+        return (
+            self.position_filter.velocity
+        )
+
+    @property
+    def acceleration_bias_body(
+        self,
+    ):
+        return (
+            self.position_filter
+            .acceleration_bias_body
+        )
+
+    @property
+    def angles(
+        self,
+    ):
+        return (
+            self.attitude_filter.angles.copy()
+        )
+
+    @property
+    def angular_rates(
+        self,
+    ):
+        return (
+            self.attitude_filter
+            .angular_rates.copy()
+        )
+
+    def update(
+        self,
+        sensor_measurements,
+        dt,
+    ):
+        # --------------------------------------------------------------
+        # Attitude prediction
+        # --------------------------------------------------------------
+
+        self.attitude_filter.predict(
+            sensor_measurements[
+                "imu_gyro"
+            ],
+            dt,
+        )
+
+        estimated_rotation = (
+            rotation_matrix(
+                self.attitude_filter.angles[0],
+                self.attitude_filter.angles[1],
+                self.attitude_filter.angles[2],
+            )
+        )
+
+        # --------------------------------------------------------------
+        # Translational prediction
+        # --------------------------------------------------------------
+
+        self.position_filter.predict(
+            sensor_measurements[
+                "imu_acceleration"
+            ],
+            estimated_rotation,
+            dt,
+        )
+
+        # --------------------------------------------------------------
+        # GPS update
+        # --------------------------------------------------------------
+
+        if sensor_measurements[
+            "gps_available"
+        ]:
+
+            accepted = (
+                self.position_filter
+                .update_position(
+                    sensor_measurements[
+                        "gps_position"
+                    ],
+                    GPS_POSITION_NOISE_STD,
+                )
+            )
+
+            if accepted:
+
+                self.accepted_updates[
+                    "gps"
+                ] += 1
+
+            else:
+
+                self.rejected_updates[
+                    "gps"
+                ] += 1
+
+        # --------------------------------------------------------------
+        # Vision-position update
+        # --------------------------------------------------------------
+
+        if sensor_measurements[
+            "vision_position_available"
+        ]:
+
+            accepted = (
+                self.position_filter
+                .update_position(
+                    sensor_measurements[
+                        "vision_position"
+                    ],
+                    VISION_POSITION_NOISE_STD,
+                )
+            )
+
+            if accepted:
+
+                self.accepted_updates[
+                    "vision_position"
+                ] += 1
+
+            else:
+
+                self.rejected_updates[
+                    "vision_position"
+                ] += 1
+
+        # --------------------------------------------------------------
+        # Depth update
+        # --------------------------------------------------------------
+
+        if sensor_measurements[
+            "depth_available"
+        ]:
+
+            accepted = (
+                self.position_filter
+                .update_depth(
+                    sensor_measurements[
+                        "depth"
+                    ],
+                    DEPTH_NOISE_STD,
+                )
+            )
+
+            if accepted:
+
+                self.accepted_updates[
+                    "depth"
+                ] += 1
+
+            else:
+
+                self.rejected_updates[
+                    "depth"
+                ] += 1
+
+        # --------------------------------------------------------------
+        # Sonar-like position update
+        # --------------------------------------------------------------
+
+        if sensor_measurements[
+            "sonar_available"
+        ]:
+
+            accepted = (
+                self.position_filter
+                .update_position(
+                    sensor_measurements[
+                        "sonar_position"
+                    ],
+                    SONAR_POSITION_NOISE_STD,
+                )
+            )
+
+            if accepted:
+
+                self.accepted_updates[
+                    "sonar"
+                ] += 1
+
+            else:
+
+                self.rejected_updates[
+                    "sonar"
+                ] += 1
+
+        # --------------------------------------------------------------
+        # Visual attitude update
+        # --------------------------------------------------------------
+
+        if sensor_measurements[
+            "vision_attitude_available"
+        ]:
+
+            innovation = (
+                wrap_angle_vector(
+                    sensor_measurements[
+                        "vision_attitude"
+                    ]
+                    -
+                    self.attitude_filter.angles
+                )
+            )
+
+            if (
+                np.linalg.norm(
+                    innovation
+                )
+                <=
+                np.deg2rad(
+                    10.0
+                )
+            ):
+
+                self.attitude_filter.update_visual_attitude(
+                    sensor_measurements[
+                        "vision_attitude"
+                    ]
+                )
+
+                self.accepted_updates[
+                    "vision_attitude"
+                ] += 1
+
+            else:
+
+                self.rejected_updates[
+                    "vision_attitude"
+                ] += 1
+
+    def confidence(
+        self,
+    ):
+        """
+        Combined translational estimator confidence.
+
+        This method was missing from the previous replacement and is
+        now explicitly defined.
+        """
 
         return (
-            TAKEOFF_TARGET.copy(),
-            np.zeros(3),
-            np.zeros(3),
+            self.position_filter.confidence()
         )
-
-    # --------------------------------------------------------------
-    # 11-14 s: water-entry descent
-    # --------------------------------------------------------------
-
-    if t < WATER_DESCENT_END_TIME:
-
-        return interpolate_segment(
-            t,
-            WATER_DESCENT_START_TIME,
-            WATER_DESCENT_END_TIME,
-            TAKEOFF_TARGET,
-            WATER_ENTRY_TARGET,
-        )
-
-    # --------------------------------------------------------------
-    # 14-18 s: submerged stabilization
-    # --------------------------------------------------------------
-
-    if t < SUBMERGED_STABILIZATION_END_TIME:
-
-        return interpolate_segment(
-            t,
-            SUBMERGED_STABILIZATION_START_TIME,
-            SUBMERGED_STABILIZATION_END_TIME,
-            WATER_ENTRY_TARGET,
-            UNDERWATER_HOLD_TARGET,
-        )
-
-    # --------------------------------------------------------------
-    # 18-23 s: underwater trajectory 1
-    # --------------------------------------------------------------
-
-    if t < UNDERWATER_TRAJECTORY_1_END_TIME:
-
-        return interpolate_segment(
-            t,
-            UNDERWATER_TRAJECTORY_1_START_TIME,
-            UNDERWATER_TRAJECTORY_1_END_TIME,
-            UNDERWATER_HOLD_TARGET,
-            TRAJECTORY_1_TARGET,
-        )
-
-    # --------------------------------------------------------------
-    # 23-29 s: underwater trajectory 2
-    # --------------------------------------------------------------
-
-    if t < UNDERWATER_TRAJECTORY_2_END_TIME:
-
-        return interpolate_segment(
-            t,
-            UNDERWATER_TRAJECTORY_2_START_TIME,
-            UNDERWATER_TRAJECTORY_2_END_TIME,
-            TRAJECTORY_1_TARGET,
-            TRAJECTORY_2_TARGET,
-        )
-
-    # --------------------------------------------------------------
-    # 29-33 s: return
-    # --------------------------------------------------------------
-
-    if t < RETURN_END_TIME:
-
-        return interpolate_segment(
-            t,
-            RETURN_START_TIME,
-            RETURN_END_TIME,
-            TRAJECTORY_2_TARGET,
-            FINAL_TARGET,
-        )
-
-    # --------------------------------------------------------------
-    # 33-35 s: final hold
-    # --------------------------------------------------------------
-
-    return (
-        FINAL_TARGET.copy(),
-        np.zeros(3),
-        np.zeros(3),
-    )
 
 
 # ======================================================================
-# THRUST / RPM
+# MOTOR FUNCTIONS
 # ======================================================================
 
 def thrust_to_rpm(
     thrust,
 ):
     if thrust <= 0.0:
+
         return 0.0
 
     omega = np.sqrt(
@@ -1151,10 +2385,6 @@ def maximum_motor_thrust():
     )
 
 
-# ======================================================================
-# MOTOR MIXER
-# ======================================================================
-
 def calculate_motor_thrusts(
     total_thrust,
     roll_torque,
@@ -1193,7 +2423,8 @@ def calculate_motor_thrusts(
                 KM,
                 -KM,
             ],
-        ]
+        ],
+        dtype=float,
     )
 
     desired = np.array(
@@ -1202,7 +2433,8 @@ def calculate_motor_thrusts(
             roll_torque,
             pitch_torque,
             yaw_torque,
-        ]
+        ],
+        dtype=float,
     )
 
     return np.linalg.solve(
@@ -1218,14 +2450,7 @@ def motor_mixer(
     yaw_torque,
     arm_length,
 ):
-    """
-    Allocate thrust under individual-motor limits.
-
-    Torque is scaled down when the complete requested allocation is
-    infeasible. Collective thrust remains preserved as far as possible.
-    """
-
-    maximum_thrust = (
+    max_thrust = (
         maximum_motor_thrust()
     )
 
@@ -1235,10 +2460,9 @@ def motor_mixer(
 
     collective_clipped = (
         requested_total
-        > (
-            4.0
-            * maximum_thrust
-        )
+        >
+        4.0
+        * max_thrust
     )
 
     total_thrust = float(
@@ -1246,11 +2470,11 @@ def motor_mixer(
             requested_total,
             0.0,
             4.0
-            * maximum_thrust,
+            * max_thrust,
         )
     )
 
-    torque = np.array(
+    torques = np.array(
         [
             roll_torque,
             pitch_torque,
@@ -1262,9 +2486,9 @@ def motor_mixer(
     candidate = (
         calculate_motor_thrusts(
             total_thrust,
-            torque[0],
-            torque[1],
-            torque[2],
+            torques[0],
+            torques[1],
+            torques[2],
             arm_length,
         )
     )
@@ -1275,8 +2499,7 @@ def motor_mixer(
         )
         and
         np.all(
-            candidate
-            <= maximum_thrust
+            candidate <= max_thrust
         )
     ):
 
@@ -1300,19 +2523,20 @@ def motor_mixer(
         )
     )
 
-    for _ in range(40):
+    for _ in range(
+        40
+    ):
 
         scale = (
-            low
-            + high
+            low + high
         ) / 2.0
 
         candidate = (
             calculate_motor_thrusts(
                 total_thrust,
-                torque[0] * scale,
-                torque[1] * scale,
-                torque[2] * scale,
+                torques[0] * scale,
+                torques[1] * scale,
+                torques[2] * scale,
                 arm_length,
             )
         )
@@ -1323,8 +2547,7 @@ def motor_mixer(
             )
             and
             np.all(
-                candidate
-                <= maximum_thrust
+                candidate <= max_thrust
             )
         ):
 
@@ -1339,7 +2562,7 @@ def motor_mixer(
         np.clip(
             best,
             0.0,
-            maximum_thrust,
+            max_thrust,
         ),
         True,
         low,
@@ -1347,7 +2570,7 @@ def motor_mixer(
     )
 
 
-def calculate_actual_torques(
+def actual_torques(
     motor_thrusts,
     arm_length,
 ):
@@ -1391,19 +2614,20 @@ def calculate_actual_torques(
             roll_torque,
             pitch_torque,
             yaw_torque,
-        ]
+        ],
+        dtype=float,
     )
 
 
 # ======================================================================
-# FORCE -> DESIRED ATTITUDE
+# FORCE / ATTITUDE
 # ======================================================================
 
 def force_to_desired_angles(
-    required_force,
+    force,
 ):
     magnitude = np.linalg.norm(
-        required_force
+        force
     )
 
     if magnitude <= 1e-12:
@@ -1412,16 +2636,16 @@ def force_to_desired_angles(
             [
                 0.0,
                 0.0,
-                TARGET_YAW,
+                0.0,
             ]
         )
 
     direction = (
-        required_force
+        force
         / magnitude
     )
 
-    desired_roll = np.arctan2(
+    roll = np.arctan2(
         -direction[1],
         np.sqrt(
             direction[0]**2
@@ -1429,7 +2653,7 @@ def force_to_desired_angles(
         ),
     )
 
-    desired_pitch = np.arctan2(
+    pitch = np.arctan2(
         direction[0],
         direction[2],
     )
@@ -1437,37 +2661,36 @@ def force_to_desired_angles(
     return np.array(
         [
             np.clip(
-                desired_roll,
+                roll,
                 -MAX_ROLL,
                 MAX_ROLL,
             ),
             np.clip(
-                desired_pitch,
+                pitch,
                 -MAX_PITCH,
                 MAX_PITCH,
             ),
-            TARGET_YAW,
+            0.0,
         ]
     )
 
 
-def constrain_force_to_attitude_limits(
-    required_force,
+def feasible_force(
+    force,
 ):
-    """
-    Project required force onto the feasible body-Z direction.
-    """
-
     magnitude = np.linalg.norm(
-        required_force
+        force
     )
 
     if magnitude <= 1e-12:
-        return np.zeros(3)
+
+        return np.zeros(
+            3
+        )
 
     desired_angles = (
         force_to_desired_angles(
-            required_force
+            force
         )
     )
 
@@ -1479,139 +2702,72 @@ def constrain_force_to_attitude_limits(
         )
     )
 
-    feasible_body_z = (
-        feasible_rotation[:, 2]
+    body_z_world = (
+        feasible_rotation[
+            :,
+            2
+        ]
     )
 
-    feasible_thrust = max(
+    thrust = max(
         float(
             np.dot(
-                required_force,
-                feasible_body_z,
+                force,
+                body_z_world,
             )
         ),
         0.0,
     )
 
     return (
-        feasible_thrust
-        * feasible_body_z
+        thrust
+        * body_z_world
     )
 
 
-# ======================================================================
-# MORPHOLOGY-AWARE ATTITUDE CONTROL
-# ======================================================================
-
 def morphology_aware_attitude_control(
-    attitude_controller,
+    controller,
     desired_angles,
-    angles,
-    angular_rates,
-    current_inertia,
+    estimated_angles,
+    estimated_rates,
+    inertia,
     inertia_rate,
     inertia_scale,
 ):
     base_torque = (
-        attitude_controller.update(
+        controller.update(
             desired_angles,
-            angles,
-            angular_rates,
+            estimated_angles,
+            estimated_rates,
         )
     )
 
-    adaptive_torque = (
+    scaled_torque = (
         inertia_scale
         * base_torque
     )
 
     angular_momentum = (
-        current_inertia
-        @ angular_rates
+        inertia
+        @ estimated_rates
     )
 
     gyroscopic_term = (
         np.cross(
-            angular_rates,
+            estimated_rates,
             angular_momentum,
         )
     )
 
     inertia_rate_term = (
         inertia_rate
-        @ angular_rates
-    )
-
-    dynamic_compensation = (
-        gyroscopic_term
-        + inertia_rate_term
-    )
-
-    commanded_torque = (
-        adaptive_torque
-        + dynamic_compensation
+        @ estimated_rates
     )
 
     return (
-        commanded_torque,
-        base_torque,
-        dynamic_compensation,
-    )
-
-
-# ======================================================================
-# REFERENCE TRAJECTORY VALIDATION
-# ======================================================================
-
-def validate_reference_trajectory():
-    """
-    Print the reference values at important mission times.
-    """
-
-    checkpoint_times = [
-        0.0,
-        3.0,
-        6.0,
-        8.0,
-        10.0,
-        11.0,
-        12.5,
-        14.0,
-        18.0,
-        23.0,
-        29.0,
-        33.0,
-        35.0,
-    ]
-
-    print(
-        "REFERENCE TRAJECTORY CHECKPOINTS"
-    )
-
-    print(
-        "-" * 76
-    )
-
-    for t in checkpoint_times:
-
-        (
-            target_position,
-            target_velocity,
-            _target_acceleration,
-        ) = stage5b_trajectory(
-            t
-        )
-
-        print(
-            f"t = {t:5.1f} s | "
-            f"X = {target_position[0]:8.4f} | "
-            f"Y = {target_position[1]:8.4f} | "
-            f"Z = {target_position[2]:8.4f} | "
-            f"|V| = {np.linalg.norm(target_velocity):8.4f}"
-        )
-
-    print(
-        "-" * 76
+        scaled_torque
+        + gyroscopic_term
+        + inertia_rate_term
     )
 
 
@@ -1621,15 +2777,25 @@ def validate_reference_trajectory():
 
 def run_simulation():
 
-    position = (
-        INITIAL_POSITION.copy()
+    true_position = (
+        P_INITIAL.copy()
     )
 
-    velocity = np.zeros(3)
+    true_velocity = np.zeros(
+        3
+    )
 
-    angles = np.zeros(3)
+    true_angles = np.zeros(
+        3
+    )
 
-    angular_rates = np.zeros(3)
+    true_angular_rates = np.zeros(
+        3
+    )
+
+    previous_acceleration = np.zeros(
+        3
+    )
 
     motors = [
         Motor(),
@@ -1638,36 +2804,44 @@ def run_simulation():
         Motor(),
     ]
 
-    maximum_thrust = (
+    sensor_simulator = (
+        SensorSimulator()
+    )
+
+    estimator = (
+        MultiModalStateEstimator()
+    )
+
+    max_motor_thrust = (
         maximum_motor_thrust()
     )
 
-    maximum_arm_length = (
+    max_arm_length = (
         ARM_LENGTH
         * EXTENDED_ARM_RATIO
     )
 
-    maximum_arm = (
-        maximum_arm_length
+    max_arm = (
+        max_arm_length
         / np.sqrt(2.0)
     )
 
-    maximum_roll_torque = (
+    max_roll_torque = (
         2.0
-        * maximum_arm
-        * maximum_thrust
+        * max_arm
+        * max_motor_thrust
     )
 
-    maximum_pitch_torque = (
+    max_pitch_torque = (
         2.0
-        * maximum_arm
-        * maximum_thrust
+        * max_arm
+        * max_motor_thrust
     )
 
-    maximum_yaw_torque = (
+    max_yaw_torque = (
         2.0
         * KM
-        * maximum_thrust
+        * max_motor_thrust
     )
 
     attitude_controller = (
@@ -1675,185 +2849,192 @@ def run_simulation():
             kp_roll=ATTITUDE_KP_ROLL,
             kp_pitch=ATTITUDE_KP_PITCH,
             kp_yaw=ATTITUDE_KP_YAW,
+
             kd_roll=ATTITUDE_KD_ROLL,
             kd_pitch=ATTITUDE_KD_PITCH,
             kd_yaw=ATTITUDE_KD_YAW,
-            max_roll_torque=maximum_roll_torque,
-            max_pitch_torque=maximum_pitch_torque,
-            max_yaw_torque=maximum_yaw_torque,
+
+            max_roll_torque=max_roll_torque,
+            max_pitch_torque=max_pitch_torque,
+            max_yaw_torque=max_yaw_torque,
         )
     )
 
     steps = int(
-        STAGE5B_SIMULATION_TIME
+        SIMULATION_TIME
         / DT
     )
 
     time = (
-        np.arange(steps)
+        np.arange(
+            steps
+        )
         * DT
     )
 
-    # --------------------------------------------------------------
-    # History arrays
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Vector histories
+    # ------------------------------------------------------------------
 
-    position_history = np.zeros(
-        (steps, 3)
-    )
+    vector_history_names = [
+        "position",
+        "velocity",
+        "angles",
+        "angular_rates",
 
-    velocity_history = np.zeros(
-        (steps, 3)
-    )
+        "estimated_position",
+        "estimated_velocity",
+        "estimated_angles",
+        "estimated_angular_rates",
+        "estimated_acceleration_bias",
 
-    angle_history = np.zeros(
-        (steps, 3)
-    )
+        "target_position",
+        "target_velocity",
+        "target_acceleration",
 
-    angular_rate_history = np.zeros(
-        (steps, 3)
-    )
+        "desired_angles",
+        "required_force",
+        "torque",
+        "acceleration",
+    ]
 
-    target_position_history = np.zeros(
-        (steps, 3)
-    )
+    history = {
+        name: np.zeros(
+            (
+                steps,
+                3,
+            )
+        )
+        for name in vector_history_names
+    }
 
-    target_velocity_history = np.zeros(
-        (steps, 3)
-    )
+    # ------------------------------------------------------------------
+    # Scalar histories
+    # ------------------------------------------------------------------
 
-    target_acceleration_history = np.zeros(
-        (steps, 3)
-    )
+    scalar_names = [
+        "requested_thrust",
+        "commanded_thrust",
+        "effective_thrust",
 
-    desired_angle_history = np.zeros(
-        (steps, 3)
-    )
+        "buoyancy",
+        "drag",
 
-    requested_thrust_history = np.zeros(
-        steps
-    )
+        "immersion",
+        "estimated_immersion",
+        "propulsion_effectiveness",
 
-    commanded_thrust_history = np.zeros(
-        steps
-    )
+        "morphology",
+        "morphology_rate",
+        "arm_length",
+        "inertia_scale",
 
-    effective_thrust_history = np.zeros(
-        steps
-    )
+        "commanded_direction_error",
+        "actual_direction_error",
 
-    torque_history = np.zeros(
-        (steps, 3)
-    )
+        "torque_scale",
+
+        "impact_force",
+        "impact_normal_speed",
+
+        "position_estimation_error",
+        "velocity_estimation_error",
+        "attitude_estimation_error",
+
+        "estimator_confidence",
+        "position_covariance_trace",
+    ]
+
+    scalar = {
+        name: np.zeros(
+            steps
+        )
+        for name in scalar_names
+    }
+
+    # ------------------------------------------------------------------
+    # Actuator histories
+    # ------------------------------------------------------------------
 
     rpm_history = np.zeros(
-        (steps, 4)
+        (
+            steps,
+            4,
+        )
     )
 
     motor_thrust_history = np.zeros(
-        (steps, 4)
+        (
+            steps,
+            4,
+        )
     )
 
-    immersion_history = np.zeros(
-        steps
-    )
+    # ------------------------------------------------------------------
+    # Boolean histories
+    # ------------------------------------------------------------------
 
-    propulsion_effectiveness_history = np.zeros(
-        steps
-    )
+    bool_names = [
+        "torque_saturation",
+        "collective_clipped",
+        "impact_active",
 
-    buoyancy_history = np.zeros(
-        steps
-    )
+        "gps_available",
+        "vision_position_available",
+        "depth_available",
+        "sonar_available",
+        "vision_attitude_available",
+    ]
 
-    drag_history = np.zeros(
-        steps
-    )
-
-    morphology_history = np.zeros(
-        steps
-    )
-
-    morphology_rate_history = np.zeros(
-        steps
-    )
-
-    arm_length_history = np.zeros(
-        steps
-    )
-
-    inertia_scale_history = np.zeros(
-        steps
-    )
-
-    required_force_history = np.zeros(
-        (steps, 3)
-    )
-
-    commanded_direction_error_history = np.zeros(
-        steps
-    )
-
-    thrust_direction_error_history = np.zeros(
-        steps
-    )
-
-    torque_scale_history = np.ones(
-        steps
-    )
-
-    torque_saturation_history = np.zeros(
-        steps,
-        dtype=bool,
-    )
-
-    collective_clipped_history = np.zeros(
-        steps,
-        dtype=bool,
-    )
-
-    acceleration_history = np.zeros(
-        (steps, 3)
-    )
-
-    impact_force_history = np.zeros(
-        steps
-    )
-
-    impact_normal_speed_history = np.zeros(
-        steps
-    )
-
-    impact_active_history = np.zeros(
-        steps,
-        dtype=bool,
-    )
+    boolean = {
+        name: np.zeros(
+            steps,
+            dtype=bool,
+        )
+        for name in bool_names
+    }
 
     # ==================================================================
-    # MAIN LOOP
+    # LOOP
     # ==================================================================
 
-    for i, t in enumerate(time):
+    for i, t in enumerate(
+        time
+    ):
+
+        # --------------------------------------------------------------
+        # Reference trajectory
+        # --------------------------------------------------------------
 
         (
             target_position,
             target_velocity,
             target_acceleration,
-        ) = stage5b_trajectory(
+        ) = mission_trajectory(
             t
         )
 
-        target_position_history[i] = (
+        history[
+            "target_position"
+        ][i] = (
             target_position
         )
 
-        target_velocity_history[i] = (
+        history[
+            "target_velocity"
+        ][i] = (
             target_velocity
         )
 
-        target_acceleration_history[i] = (
+        history[
+            "target_acceleration"
+        ][i] = (
             target_acceleration
         )
+
+        # --------------------------------------------------------------
+        # Morphology
+        # --------------------------------------------------------------
 
         (
             morphology_state,
@@ -1869,85 +3050,243 @@ def run_simulation():
             t
         )
 
-        morphology_history[i] = (
-            morphology_state
-        )
+        scalar[
+            "morphology"
+        ][i] = morphology_state
 
-        morphology_rate_history[i] = (
-            morphology_rate
-        )
+        scalar[
+            "morphology_rate"
+        ][i] = morphology_rate
 
-        arm_length_history[i] = (
-            current_arm_length
-        )
+        scalar[
+            "arm_length"
+        ][i] = current_arm_length
 
-        inertia_scale_history[i] = (
-            inertia_scale
-        )
+        scalar[
+            "inertia_scale"
+        ][i] = inertia_scale
 
-        (
-            immersion,
-            buoyancy_force,
-            hydrodynamic_drag,
-            drag_magnitude,
-            propulsion_effectiveness,
-        ) = calculate_medium_effects(
-            position,
-            velocity,
-        )
+        # --------------------------------------------------------------
+        # TRUE medium
+        # --------------------------------------------------------------
 
         (
-            water_entry_impact_force,
-            water_entry_impact_magnitude,
-            water_entry_normal_speed,
-            _water_entry_immersion_rate,
-            water_entry_impact_active,
-        ) = calculate_water_entry_impact(
+            true_immersion,
+            true_buoyancy_force,
+            true_drag_force,
+            true_drag_magnitude,
+            true_propulsion_effectiveness,
+        ) = medium_effects(
+            true_position,
+            true_velocity,
+        )
+
+        scalar[
+            "immersion"
+        ][i] = true_immersion
+
+        scalar[
+            "buoyancy"
+        ][i] = true_buoyancy_force[2]
+
+        scalar[
+            "drag"
+        ][i] = true_drag_magnitude
+
+        scalar[
+            "propulsion_effectiveness"
+        ][i] = true_propulsion_effectiveness
+
+        # --------------------------------------------------------------
+        # Sensors
+        # --------------------------------------------------------------
+
+        measurements = (
+            sensor_simulator.measure(
+                t,
+                true_position,
+                true_velocity,
+                true_angles,
+                true_angular_rates,
+                previous_acceleration,
+                true_immersion,
+            )
+        )
+
+        for key in [
+            "gps_available",
+            "vision_position_available",
+            "depth_available",
+            "sonar_available",
+            "vision_attitude_available",
+        ]:
+
+            boolean[
+                key
+            ][i] = measurements[
+                key
+            ]
+
+        # --------------------------------------------------------------
+        # State estimation
+        # --------------------------------------------------------------
+
+        estimator.update(
+            measurements,
+            DT,
+        )
+
+        estimated_position = (
+            estimator.position
+        )
+
+        estimated_velocity = (
+            estimator.velocity
+        )
+
+        estimated_angles = (
+            estimator.angles
+        )
+
+        estimated_rates = (
+            estimator.angular_rates
+        )
+
+        estimated_bias_body = (
+            estimator.acceleration_bias_body
+        )
+
+        history[
+            "estimated_position"
+        ][i] = estimated_position
+
+        history[
+            "estimated_velocity"
+        ][i] = estimated_velocity
+
+        history[
+            "estimated_angles"
+        ][i] = estimated_angles
+
+        history[
+            "estimated_angular_rates"
+        ][i] = estimated_rates
+
+        history[
+            "estimated_acceleration_bias"
+        ][i] = estimated_bias_body
+
+        # --------------------------------------------------------------
+        # Estimation errors
+        # --------------------------------------------------------------
+
+        scalar[
+            "position_estimation_error"
+        ][i] = (
+            np.linalg.norm(
+                estimated_position
+                - true_position
+            )
+        )
+
+        scalar[
+            "velocity_estimation_error"
+        ][i] = (
+            np.linalg.norm(
+                estimated_velocity
+                - true_velocity
+            )
+        )
+
+        scalar[
+            "attitude_estimation_error"
+        ][i] = np.rad2deg(
+            np.linalg.norm(
+                wrap_angle_vector(
+                    estimated_angles
+                    - true_angles
+                )
+            )
+        )
+
+        scalar[
+            "estimator_confidence"
+        ][i] = (
+            estimator.confidence()
+        )
+
+        scalar[
+            "position_covariance_trace"
+        ][i] = float(
+            np.trace(
+                estimator
+                .position_filter
+                .P[
+                    :3,
+                    :3
+                ]
+            )
+        )
+
+        # --------------------------------------------------------------
+        # Estimated medium
+        # --------------------------------------------------------------
+
+        (
+            estimated_immersion,
+            estimated_buoyancy_force,
+            estimated_drag_force,
+            _estimated_drag_magnitude,
+            estimated_propulsion_effectiveness,
+        ) = medium_effects(
+            estimated_position,
+            estimated_velocity,
+        )
+
+        scalar[
+            "estimated_immersion"
+        ][i] = estimated_immersion
+
+        # --------------------------------------------------------------
+        # Water-entry disturbance
+        # --------------------------------------------------------------
+
+        (
+            impact_force,
+            impact_magnitude,
+            impact_normal_speed,
+            _impact_rate,
+            impact_active,
+        ) = water_entry_impact(
             t,
-            position,
-            velocity,
+            true_position,
+            true_velocity,
         )
 
-        immersion_history[i] = (
-            immersion
-        )
+        scalar[
+            "impact_force"
+        ][i] = impact_magnitude
 
-        propulsion_effectiveness_history[i] = (
-            propulsion_effectiveness
-        )
+        scalar[
+            "impact_normal_speed"
+        ][i] = impact_normal_speed
 
-        buoyancy_history[i] = (
-            buoyancy_force[2]
-        )
+        boolean[
+            "impact_active"
+        ][i] = impact_active
 
-        drag_history[i] = (
-            drag_magnitude
-        )
-
-        impact_force_history[i] = (
-            water_entry_impact_magnitude
-        )
-
-        impact_normal_speed_history[i] = (
-            water_entry_normal_speed
-        )
-
-        impact_active_history[i] = (
-            water_entry_impact_active
-        )
-
-        # --------------------------------------------------------------
-        # Position controller
-        # --------------------------------------------------------------
+        # ==============================================================
+        # ESTIMATED-STATE POSITION CONTROL
+        # ==============================================================
 
         position_error = (
             target_position
-            - position
+            - estimated_position
         )
 
         velocity_error = (
             target_velocity
-            - velocity
+            - estimated_velocity
         )
 
         feedback_acceleration = (
@@ -1970,43 +3309,58 @@ def run_simulation():
             * velocity_error
         )
 
+        # --------------------------------------------------------------
+        # Horizontal limit
+        # --------------------------------------------------------------
+
         horizontal_acceleration = (
-            feedback_acceleration[:2]
+            feedback_acceleration[
+                :2
+            ]
         )
 
-        horizontal_magnitude = (
+        horizontal_norm = (
             np.linalg.norm(
                 horizontal_acceleration
             )
         )
 
         if (
-            horizontal_magnitude
-            > MAX_HORIZONTAL_ACCELERATION
+            horizontal_norm
+            >
+            MAX_HORIZONTAL_ACCELERATION
         ):
 
             horizontal_acceleration *= (
                 MAX_HORIZONTAL_ACCELERATION
-                / horizontal_magnitude
+                / horizontal_norm
             )
 
-        feedback_acceleration[0] = (
-            horizontal_acceleration[0]
-        )
+        feedback_acceleration[
+            0
+        ] = horizontal_acceleration[
+            0
+        ]
 
-        feedback_acceleration[1] = (
-            horizontal_acceleration[1]
-        )
+        feedback_acceleration[
+            1
+        ] = horizontal_acceleration[
+            1
+        ]
 
-        feedback_acceleration[2] = np.clip(
-            feedback_acceleration[2],
+        # --------------------------------------------------------------
+        # Vertical limit
+        # --------------------------------------------------------------
+
+        feedback_acceleration[
+            2
+        ] = np.clip(
+            feedback_acceleration[
+                2
+            ],
             -MAX_VERTICAL_ACCELERATION,
             MAX_VERTICAL_ACCELERATION,
         )
-
-        # --------------------------------------------------------------
-        # Gravity
-        # --------------------------------------------------------------
 
         gravity_force = np.array(
             [
@@ -2017,27 +3371,34 @@ def run_simulation():
         )
 
         # --------------------------------------------------------------
-        # Controller required force
+        # Required controller force
         #
-        # Impact force remains deliberately excluded.
+        # Water-entry impact remains excluded from controller
+        # feedforward.
         # --------------------------------------------------------------
 
         raw_required_force = (
             MASS
             * feedback_acceleration
             - gravity_force
-            - buoyancy_force
-            - hydrodynamic_drag
+            - estimated_buoyancy_force
+            - estimated_drag_force
         )
 
         required_thrust_world = (
-            constrain_force_to_attitude_limits(
+            feasible_force(
                 raw_required_force
             )
         )
 
-        required_force_history[i] = (
-            required_thrust_world
+        history[
+            "required_force"
+        ][i] = required_thrust_world
+
+        required_thrust_magnitude = (
+            np.linalg.norm(
+                required_thrust_world
+            )
         )
 
         # --------------------------------------------------------------
@@ -2050,73 +3411,72 @@ def run_simulation():
             )
         )
 
-        desired_angle_history[i] = (
-            desired_angles
-        )
+        history[
+            "desired_angles"
+        ][i] = desired_angles
 
         # --------------------------------------------------------------
         # Attitude controller
         # --------------------------------------------------------------
 
-        (
-            torque_command,
-            _base_torque,
-            _dynamic_compensation,
-        ) = morphology_aware_attitude_control(
-            attitude_controller,
-            desired_angles,
-            angles,
-            angular_rates,
-            current_inertia,
-            inertia_rate,
-            inertia_scale,
+        commanded_torque = (
+            morphology_aware_attitude_control(
+                attitude_controller,
+                desired_angles,
+                estimated_angles,
+                estimated_rates,
+                current_inertia,
+                inertia_rate,
+                inertia_scale,
+            )
         )
 
         # --------------------------------------------------------------
-        # Thrust-direction metrics
+        # Direction error
         # --------------------------------------------------------------
-
-        required_force_magnitude = (
-            np.linalg.norm(
-                required_thrust_world
-            )
-        )
-
-        desired_rotation = (
-            rotation_matrix(
-                desired_angles[0],
-                desired_angles[1],
-                desired_angles[2],
-            )
-        )
-
-        desired_body_z = (
-            desired_rotation[:, 2]
-        )
-
-        actual_rotation = (
-            rotation_matrix(
-                angles[0],
-                angles[1],
-                angles[2],
-            )
-        )
-
-        actual_body_z = (
-            actual_rotation[:, 2]
-        )
 
         if (
-            required_force_magnitude
-            > 1e-12
+            required_thrust_magnitude
+            >
+            1e-12
         ):
 
             required_direction = (
                 required_thrust_world
-                / required_force_magnitude
+                / required_thrust_magnitude
             )
 
-            commanded_alignment = np.clip(
+            desired_rotation = (
+                rotation_matrix(
+                    desired_angles[0],
+                    desired_angles[1],
+                    desired_angles[2],
+                )
+            )
+
+            true_rotation = (
+                rotation_matrix(
+                    true_angles[0],
+                    true_angles[1],
+                    true_angles[2],
+                )
+            )
+
+            desired_body_z = (
+                desired_rotation[
+                    :,
+                    2
+                ]
+            )
+
+            true_body_z = (
+                true_rotation[
+                    :,
+                    2
+                ]
+            )
+
+            commanded_dot = np.clip(
                 np.dot(
                     desired_body_z,
                     required_direction,
@@ -2125,28 +3485,28 @@ def run_simulation():
                 1.0,
             )
 
-            actual_alignment = np.clip(
+            actual_dot = np.clip(
                 np.dot(
-                    actual_body_z,
+                    true_body_z,
                     required_direction,
                 ),
                 -1.0,
                 1.0,
             )
 
-            commanded_direction_error_history[i] = (
-                np.rad2deg(
-                    np.arccos(
-                        commanded_alignment
-                    )
+            scalar[
+                "commanded_direction_error"
+            ][i] = np.rad2deg(
+                np.arccos(
+                    commanded_dot
                 )
             )
 
-            thrust_direction_error_history[i] = (
-                np.rad2deg(
-                    np.arccos(
-                        actual_alignment
-                    )
+            scalar[
+                "actual_direction_error"
+            ][i] = np.rad2deg(
+                np.arccos(
+                    actual_dot
                 )
             )
 
@@ -2154,16 +3514,18 @@ def run_simulation():
         # Cross-medium propulsion
         # --------------------------------------------------------------
 
-        required_aerial_equivalent_thrust = (
-            required_force_magnitude
+        requested_aerial_equivalent_thrust = (
+            required_thrust_magnitude
             / max(
-                propulsion_effectiveness,
+                estimated_propulsion_effectiveness,
                 0.05,
             )
         )
 
-        requested_thrust_history[i] = (
-            required_aerial_equivalent_thrust
+        scalar[
+            "requested_thrust"
+        ][i] = (
+            requested_aerial_equivalent_thrust
         )
 
         # --------------------------------------------------------------
@@ -2176,30 +3538,30 @@ def run_simulation():
             torque_scale,
             collective_clipped,
         ) = motor_mixer(
-            required_aerial_equivalent_thrust,
-            torque_command[0],
-            torque_command[1],
-            torque_command[2],
+            requested_aerial_equivalent_thrust,
+            commanded_torque[0],
+            commanded_torque[1],
+            commanded_torque[2],
             current_arm_length,
         )
 
-        commanded_thrust_history[i] = (
-            np.sum(
-                commanded_motor_thrusts
-            )
+        scalar[
+            "commanded_thrust"
+        ][i] = np.sum(
+            commanded_motor_thrusts
         )
 
-        torque_scale_history[i] = (
-            torque_scale
-        )
+        scalar[
+            "torque_scale"
+        ][i] = torque_scale
 
-        torque_saturation_history[i] = (
-            torque_saturated
-        )
+        boolean[
+            "torque_saturation"
+        ][i] = torque_saturated
 
-        collective_clipped_history[i] = (
-            collective_clipped
-        )
+        boolean[
+            "collective_clipped"
+        ][i] = collective_clipped
 
         # --------------------------------------------------------------
         # Motor dynamics
@@ -2235,35 +3597,37 @@ def run_simulation():
             ]
         )
 
-        rpm_history[i] = (
-            actual_rpms
-        )
+        rpm_history[
+            i
+        ] = actual_rpms
 
-        motor_thrust_history[i] = (
-            actual_motor_thrusts
-        )
+        motor_thrust_history[
+            i
+        ] = actual_motor_thrusts
 
         effective_motor_thrusts = (
             actual_motor_thrusts
-            * propulsion_effectiveness
+            * true_propulsion_effectiveness
         )
 
-        actual_total_effective_thrust = (
+        effective_total_thrust = (
             np.sum(
                 effective_motor_thrusts
             )
         )
 
-        effective_thrust_history[i] = (
-            actual_total_effective_thrust
+        scalar[
+            "effective_thrust"
+        ][i] = (
+            effective_total_thrust
         )
 
         # --------------------------------------------------------------
-        # Actual torques
+        # Plant torque
         # --------------------------------------------------------------
 
         actual_aerial_torque = (
-            calculate_actual_torques(
+            actual_torques(
                 actual_motor_thrusts,
                 current_arm_length,
             )
@@ -2271,248 +3635,197 @@ def run_simulation():
 
         actual_effective_torque = (
             actual_aerial_torque
-            * propulsion_effectiveness
+            * true_propulsion_effectiveness
         )
 
         water_damping_torque = (
             -WATER_ROTATIONAL_DAMPING
-            * immersion
-            * angular_rates
+            * true_immersion
+            * true_angular_rates
         )
 
-        total_actual_torque = (
+        total_torque = (
             actual_effective_torque
             + water_damping_torque
         )
 
-        torque_history[i] = (
-            total_actual_torque
-        )
+        history[
+            "torque"
+        ][i] = total_torque
 
-        # --------------------------------------------------------------
-        # Translational dynamics
-        # --------------------------------------------------------------
+        # ==============================================================
+        # TRUE TRANSLATIONAL DYNAMICS
+        # ==============================================================
 
-        R = rotation_matrix(
-            angles[0],
-            angles[1],
-            angles[2],
+        true_rotation = (
+            rotation_matrix(
+                true_angles[0],
+                true_angles[1],
+                true_angles[2],
+            )
         )
 
         thrust_body = np.array(
             [
                 0.0,
                 0.0,
-                actual_total_effective_thrust,
+                effective_total_thrust,
             ]
         )
 
         thrust_world = (
-            R
+            true_rotation
             @ thrust_body
         )
 
         total_force = (
             thrust_world
             + gravity_force
-            + buoyancy_force
-            + hydrodynamic_drag
-            + water_entry_impact_force
+            + true_buoyancy_force
+            + true_drag_force
+            + impact_force
         )
 
-        acceleration = (
+        true_acceleration = (
             total_force
             / MASS
         )
 
-        acceleration_history[i] = (
-            acceleration
-        )
+        history[
+            "acceleration"
+        ][i] = true_acceleration
 
-        velocity += (
-            acceleration
+        true_velocity += (
+            true_acceleration
             * DT
         )
 
-        position += (
-            velocity
+        true_position += (
+            true_velocity
             * DT
         )
 
-        # --------------------------------------------------------------
-        # Rotational dynamics
-        # --------------------------------------------------------------
+        # ==============================================================
+        # TRUE ROTATIONAL DYNAMICS
+        # ==============================================================
 
         angular_momentum = (
             current_inertia
-            @ angular_rates
+            @ true_angular_rates
         )
 
-        angular_acceleration = np.linalg.solve(
-            current_inertia,
-            total_actual_torque
-            - (
-                inertia_rate
-                @ angular_rates
+        angular_acceleration = (
+            np.linalg.solve(
+                current_inertia,
+                total_torque
+                - (
+                    inertia_rate
+                    @ true_angular_rates
+                )
+                - np.cross(
+                    true_angular_rates,
+                    angular_momentum,
+                ),
             )
-            - np.cross(
-                angular_rates,
-                angular_momentum,
-            ),
         )
 
-        angular_rates += (
+        true_angular_rates += (
             angular_acceleration
             * DT
         )
 
-        # --------------------------------------------------------------
-        # Euler-angle kinematics
-        # --------------------------------------------------------------
-
-        phi = angles[0]
-
-        theta = angles[1]
-
-        cos_theta = np.cos(
-            theta
-        )
-
-        if abs(cos_theta) < 1e-5:
-            cos_theta = 1e-5
-
-        tan_theta = (
-            np.sin(theta)
-            / cos_theta
-        )
-
-        euler_rate_matrix = np.array(
-            [
-                [
-                    1.0,
-                    np.sin(phi)
-                    * tan_theta,
-                    np.cos(phi)
-                    * tan_theta,
-                ],
-                [
-                    0.0,
-                    np.cos(phi),
-                    -np.sin(phi),
-                ],
-                [
-                    0.0,
-                    np.sin(phi)
-                    / cos_theta,
-                    np.cos(phi)
-                    / cos_theta,
-                ],
-            ]
-        )
-
-        angle_rates = (
-            euler_rate_matrix
-            @ angular_rates
-        )
-
-        angles += (
-            angle_rates
+        true_angles += (
+            euler_rate_matrix(
+                true_angles
+            )
+            @ true_angular_rates
             * DT
         )
 
-        angles[2] = np.arctan2(
-            np.sin(
-                angles[2]
-            ),
-            np.cos(
-                angles[2]
-            ),
+        true_angles = (
+            wrap_angle_vector(
+                true_angles
+            )
         )
 
         # --------------------------------------------------------------
-        # Store state
+        # Store true state
         # --------------------------------------------------------------
 
-        position_history[i] = (
-            position
-        )
+        history[
+            "position"
+        ][i] = true_position
 
-        velocity_history[i] = (
-            velocity
-        )
+        history[
+            "velocity"
+        ][i] = true_velocity
 
-        angle_history[i] = (
-            angles
-        )
+        history[
+            "angles"
+        ][i] = true_angles
 
-        angular_rate_history[i] = (
-            angular_rates
+        history[
+            "angular_rates"
+        ][i] = true_angular_rates
+
+        previous_acceleration = (
+            true_acceleration.copy()
         )
 
     return {
-        "time": time,
-        "position": position_history,
-        "velocity": velocity_history,
-        "angles": angle_history,
-        "angular_rates": angular_rate_history,
-        "target_position": target_position_history,
-        "target_velocity": target_velocity_history,
-        "target_acceleration": target_acceleration_history,
-        "desired_angles": desired_angle_history,
-        "requested_thrust": requested_thrust_history,
-        "commanded_thrust": commanded_thrust_history,
-        "effective_thrust": effective_thrust_history,
-        "torque": torque_history,
-        "rpm": rpm_history,
-        "motor_thrust": motor_thrust_history,
-        "immersion": immersion_history,
-        "propulsion_effectiveness": propulsion_effectiveness_history,
-        "buoyancy": buoyancy_history,
-        "drag": drag_history,
-        "morphology": morphology_history,
-        "morphology_rate": morphology_rate_history,
-        "arm_length": arm_length_history,
-        "inertia_scale": inertia_scale_history,
-        "required_force": required_force_history,
-        "commanded_direction_error": commanded_direction_error_history,
-        "thrust_direction_error": thrust_direction_error_history,
-        "torque_scale": torque_scale_history,
-        "torque_saturation": torque_saturation_history,
-        "collective_clipped": collective_clipped_history,
-        "acceleration": acceleration_history,
-        "impact_force": impact_force_history,
-        "impact_normal_speed": impact_normal_speed_history,
-        "impact_active": impact_active_history,
+        "time":
+            time,
+
+        **history,
+        **scalar,
+
+        "rpm":
+            rpm_history,
+
+        "motor_thrust":
+            motor_thrust_history,
+
+        **boolean,
     }
 
 
 # ======================================================================
-# BASIC METRIC HELPERS
+# METRIC HELPERS
 # ======================================================================
 
-def _masked_max(
+def masked_max(
     values,
     mask,
 ):
-    if np.any(mask):
+    if np.any(
+        mask
+    ):
+
         return float(
             np.max(
-                values[mask]
+                values[
+                    mask
+                ]
             )
         )
 
     return 0.0
 
 
-def _masked_rms(
+def masked_rms(
     values,
     mask,
 ):
-    if np.any(mask):
+    if np.any(
+        mask
+    ):
+
         return float(
             np.sqrt(
                 np.mean(
-                    values[mask]**2
+                    values[
+                        mask
+                    ]**2
                 )
             )
         )
@@ -2520,49 +3833,72 @@ def _masked_rms(
     return 0.0
 
 
+def scheduled_sensor_mask(
+    time,
+    rate_hz,
+):
+    return np.array(
+        [
+            periodic_update(
+                t,
+                rate_hz,
+            )
+            for t in time
+        ],
+        dtype=bool,
+    )
+
+
+def availability_percentage(
+    available,
+    scheduled,
+    applicable_mask=None,
+):
+    effective_schedule = (
+        scheduled.copy()
+    )
+
+    if applicable_mask is not None:
+
+        effective_schedule &= (
+            applicable_mask
+        )
+
+    scheduled_count = (
+        np.count_nonzero(
+            effective_schedule
+        )
+    )
+
+    if scheduled_count == 0:
+
+        return 0.0
+
+    available_count = (
+        np.count_nonzero(
+            available
+            &
+            effective_schedule
+        )
+    )
+
+    return float(
+        100.0
+        * available_count
+        / scheduled_count
+    )
+
+
 # ======================================================================
-# IMPACT RECOVERY ANALYSIS
+# IMPACT RECOVERY METRICS
 # ======================================================================
 
 def calculate_impact_recovery_metrics(
     time,
-    error_magnitude,
+    tracking_error,
     impact_force,
     impact_active,
 ):
-    """
-    Calculate impact-relative tracking-error metrics.
-
-    Method
-    ------
-    1. Detect the first active impact sample.
-    2. Calculate local pre-impact RMS tracking error over the preceding
-       IMPACT_BASELINE_WINDOW seconds.
-    3. Detect the impact-force peak.
-    4. Examine the tracking-error response after the force peak for
-       IMPACT_RESPONSE_ANALYSIS_WINDOW seconds.
-    5. Determine the peak post-impact error.
-    6. Define impact-induced error excursion:
-
-           excess =
-               max(
-                   peak_post_impact_error
-                   - baseline_error,
-                   0
-               )
-
-    7. Define recovery threshold:
-
-           threshold =
-               baseline_error
-               + 0.10 * excess
-
-       This means recovery corresponds to returning to within 10% of
-       the disturbance-induced tracking-error excursion.
-    8. Require the error to remain below that threshold for
-       IMPACT_RECOVERY_PERSISTENCE_TIME.
-    """
-
     active_indices = np.flatnonzero(
         impact_active
     )
@@ -2571,48 +3907,48 @@ def calculate_impact_recovery_metrics(
 
         return {
             "Impact pre-event RMS error (m)":
-                float("nan"),
+                np.nan,
 
             "Peak post-impact error (m)":
-                float("nan"),
+                np.nan,
 
             "Peak impact-induced error excursion (m)":
-                float("nan"),
+                np.nan,
 
             "Impact recovery threshold (m)":
-                float("nan"),
+                np.nan,
 
             "Impact response peak time (s)":
-                float("nan"),
+                np.nan,
 
             "Impact recovery time to 10% residual (s)":
-                float("nan"),
+                np.nan,
         }
 
-    # --------------------------------------------------------------
-    # First active impact sample
-    # --------------------------------------------------------------
-
-    first_active_index = int(
+    first_index = int(
         active_indices[0]
     )
 
-    first_active_time = float(
+    first_time = float(
         time[
-            first_active_index
+            first_index
         ]
     )
 
-    baseline_start_time = max(
-        0.0,
-        first_active_time
-        - IMPACT_BASELINE_WINDOW,
-    )
-
     baseline_mask = (
-        (time >= baseline_start_time)
+        (
+            time
+            >= max(
+                0.0,
+                first_time
+                - IMPACT_BASELINE_WINDOW,
+            )
+        )
         &
-        (time < first_active_time)
+        (
+            time
+            < first_time
+        )
     )
 
     if np.any(
@@ -2622,7 +3958,7 @@ def calculate_impact_recovery_metrics(
         baseline_error = float(
             np.sqrt(
                 np.mean(
-                    error_magnitude[
+                    tracking_error[
                         baseline_mask
                     ]**2
                 )
@@ -2632,69 +3968,63 @@ def calculate_impact_recovery_metrics(
     else:
 
         baseline_error = float(
-            error_magnitude[
-                first_active_index
+            tracking_error[
+                first_index
             ]
         )
 
-    # --------------------------------------------------------------
-    # Impact force peak
-    # --------------------------------------------------------------
-
-    impact_peak_index = int(
+    peak_force_index = int(
         np.argmax(
             impact_force
         )
     )
 
-    impact_peak_force = float(
+    if (
         impact_force[
-            impact_peak_index
+            peak_force_index
         ]
-    )
-
-    if impact_peak_force <= 0.0:
+        <=
+        0.0
+    ):
 
         return {
             "Impact pre-event RMS error (m)":
                 baseline_error,
 
             "Peak post-impact error (m)":
-                float("nan"),
+                np.nan,
 
             "Peak impact-induced error excursion (m)":
-                float("nan"),
+                np.nan,
 
             "Impact recovery threshold (m)":
-                float("nan"),
+                np.nan,
 
             "Impact response peak time (s)":
-                float("nan"),
+                np.nan,
 
             "Impact recovery time to 10% residual (s)":
-                float("nan"),
+                np.nan,
         }
 
-    impact_peak_time = float(
+    peak_force_time = float(
         time[
-            impact_peak_index
+            peak_force_index
         ]
     )
 
-    # --------------------------------------------------------------
-    # Immediate post-impact response window
-    # --------------------------------------------------------------
-
-    response_end_time = min(
-        STAGE5B_SIMULATION_TIME,
-        impact_peak_time
-        + IMPACT_RESPONSE_ANALYSIS_WINDOW,
-    )
-
     response_mask = (
-        (time >= impact_peak_time)
+        (
+            time
+            >= peak_force_time
+        )
         &
-        (time <= response_end_time)
+        (
+            time
+            <=
+            peak_force_time
+            + IMPACT_RESPONSE_WINDOW
+        )
     )
 
     response_indices = np.flatnonzero(
@@ -2708,64 +4038,56 @@ def calculate_impact_recovery_metrics(
                 baseline_error,
 
             "Peak post-impact error (m)":
-                float("nan"),
+                np.nan,
 
             "Peak impact-induced error excursion (m)":
-                float("nan"),
+                np.nan,
 
             "Impact recovery threshold (m)":
-                float("nan"),
+                np.nan,
 
             "Impact response peak time (s)":
-                float("nan"),
+                np.nan,
 
             "Impact recovery time to 10% residual (s)":
-                float("nan"),
+                np.nan,
         }
 
-    local_peak_offset = int(
-        np.argmax(
-            error_magnitude[
-                response_indices
-            ]
-        )
-    )
-
-    response_peak_index = int(
+    peak_error_index = int(
         response_indices[
-            local_peak_offset
+            np.argmax(
+                tracking_error[
+                    response_indices
+                ]
+            )
         ]
     )
 
-    response_peak_time = float(
+    peak_error = float(
+        tracking_error[
+            peak_error_index
+        ]
+    )
+
+    peak_error_time = float(
         time[
-            response_peak_index
+            peak_error_index
         ]
     )
 
-    peak_post_impact_error = float(
-        error_magnitude[
-            response_peak_index
-        ]
-    )
-
-    impact_error_excursion = max(
-        peak_post_impact_error
+    excursion = max(
+        peak_error
         - baseline_error,
         0.0,
     )
 
-    recovery_threshold = (
+    threshold = (
         baseline_error
         + (
             IMPACT_RECOVERY_RESIDUAL_FRACTION
-            * impact_error_excursion
+            * excursion
         )
     )
-
-    # --------------------------------------------------------------
-    # Recovery detection
-    # --------------------------------------------------------------
 
     persistence_steps = max(
         1,
@@ -2777,35 +4099,32 @@ def calculate_impact_recovery_metrics(
         ),
     )
 
-    recovery_time = float(
-        "nan"
-    )
+    recovery_time = np.nan
 
-    search_start_index = (
-        response_peak_index
-        + 1
-    )
-
-    for i in range(
-        search_start_index,
+    for index in range(
+        peak_error_index + 1,
         len(time)
         - persistence_steps
         + 1,
     ):
 
-        window = error_magnitude[
-            i:
-            i + persistence_steps
-        ]
+        window = (
+            tracking_error[
+                index:
+                index
+                + persistence_steps
+            ]
+        )
 
         if np.all(
-            window
-            <= recovery_threshold
+            window <= threshold
         ):
 
             recovery_time = float(
-                time[i]
-                - response_peak_time
+                time[
+                    index
+                ]
+                - peak_error_time
             )
 
             break
@@ -2815,16 +4134,16 @@ def calculate_impact_recovery_metrics(
             baseline_error,
 
         "Peak post-impact error (m)":
-            peak_post_impact_error,
+            peak_error,
 
         "Peak impact-induced error excursion (m)":
-            impact_error_excursion,
+            excursion,
 
         "Impact recovery threshold (m)":
-            recovery_threshold,
+            threshold,
 
         "Impact response peak time (s)":
-            response_peak_time,
+            peak_error_time,
 
         "Impact recovery time to 10% residual (s)":
             recovery_time,
@@ -2858,89 +4177,24 @@ def calculate_metrics(
         "target_position"
     ]
 
-    requested_thrust = results[
-        "requested_thrust"
-    ]
-
-    commanded_thrust = results[
-        "commanded_thrust"
-    ]
-
-    effective_thrust = results[
-        "effective_thrust"
-    ]
-
-    rpm = results[
-        "rpm"
-    ]
-
-    motor_thrust = results[
-        "motor_thrust"
-    ]
-
-    buoyancy = results[
-        "buoyancy"
-    ]
-
-    drag = results[
-        "drag"
-    ]
-
-    commanded_direction_error = results[
-        "commanded_direction_error"
-    ]
-
-    thrust_direction_error = results[
-        "thrust_direction_error"
-    ]
-
-    torque_scale = results[
-        "torque_scale"
-    ]
-
-    torque_saturation = results[
-        "torque_saturation"
-    ]
-
-    collective_clipped = results[
-        "collective_clipped"
-    ]
-
-    impact_force = results[
-        "impact_force"
-    ]
-
-    impact_normal_speed = results[
-        "impact_normal_speed"
-    ]
-
-    acceleration = results[
-        "acceleration"
-    ]
-
-    impact_active = results[
-        "impact_active"
-    ]
-
-    # --------------------------------------------------------------
-    # Tracking error
-    # --------------------------------------------------------------
-
-    position_error = (
+    tracking_error_vector = (
         target_position
         - position
     )
 
-    error_magnitude = (
+    tracking_error = (
         np.linalg.norm(
-            position_error,
+            tracking_error_vector,
             axis=1,
         )
     )
 
     horizontal_error = (
         np.linalg.norm(
-            position_error[:, :2],
+            tracking_error_vector[
+                :,
+                :2
+            ],
             axis=1,
         )
     )
@@ -2964,57 +4218,227 @@ def calculate_metrics(
         angles[:, 2]
     )
 
-    # --------------------------------------------------------------
-    # Phase masks
-    # --------------------------------------------------------------
-
-    water_entry_mask = (
-        (time >= WATER_DESCENT_START_TIME)
-        &
-        (time < WATER_DESCENT_END_TIME)
+    position_estimation_error = (
+        results[
+            "position_estimation_error"
+        ]
     )
 
-    stabilization_mask = (
-        (time >= SUBMERGED_STABILIZATION_START_TIME)
+    velocity_estimation_error = (
+        results[
+            "velocity_estimation_error"
+        ]
+    )
+
+    underwater_mask = (
+        time
+        >= SUBMERGED_STABILIZATION_START
+    )
+
+    water_entry_mask = (
+        (
+            time
+            >= WATER_DESCENT_START
+        )
         &
-        (time < SUBMERGED_STABILIZATION_END_TIME)
+        (
+            time
+            < WATER_DESCENT_END
+        )
+    )
+
+    submerged_stabilization_mask = (
+        (
+            time
+            >= SUBMERGED_STABILIZATION_START
+        )
+        &
+        (
+            time
+            < SUBMERGED_STABILIZATION_END
+        )
     )
 
     trajectory_1_mask = (
-        (time >= UNDERWATER_TRAJECTORY_1_START_TIME)
+        (
+            time
+            >= TRAJECTORY_1_START
+        )
         &
-        (time < UNDERWATER_TRAJECTORY_1_END_TIME)
+        (
+            time
+            < TRAJECTORY_1_END
+        )
     )
 
     trajectory_2_mask = (
-        (time >= UNDERWATER_TRAJECTORY_2_START_TIME)
+        (
+            time
+            >= TRAJECTORY_2_START
+        )
         &
-        (time < UNDERWATER_TRAJECTORY_2_END_TIME)
+        (
+            time
+            < TRAJECTORY_2_END
+        )
     )
 
     return_mask = (
-        (time >= RETURN_START_TIME)
+        (
+            time
+            >= RETURN_START
+        )
         &
-        (time < RETURN_END_TIME)
+        (
+            time
+            < RETURN_END
+        )
     )
 
-    final_hold_mask = (
-        time >= FINAL_HOLD_START_TIME
+    final_mask = (
+        time
+        >= FINAL_HOLD_START
     )
 
-    submerged_mask = (
-        time >= SUBMERGED_STABILIZATION_START_TIME
+    gps_denied_mask = (
+        time
+        >= GPS_HANDOFF_END
     )
 
-    post_impact_stabilization_mask = (
-        (time >= WATER_DESCENT_END_TIME)
+    # ------------------------------------------------------------------
+    # Sensor schedules
+    # ------------------------------------------------------------------
+
+    scheduled_gps = (
+        scheduled_sensor_mask(
+            time,
+            GPS_RATE_HZ,
+        )
+    )
+
+    scheduled_vision_position = (
+        scheduled_sensor_mask(
+            time,
+            VISION_POSITION_RATE_HZ,
+        )
+    )
+
+    scheduled_depth = (
+        scheduled_sensor_mask(
+            time,
+            DEPTH_RATE_HZ,
+        )
+    )
+
+    scheduled_sonar = (
+        scheduled_sensor_mask(
+            time,
+            SONAR_RATE_HZ,
+        )
+    )
+
+    scheduled_vision_attitude = (
+        scheduled_sensor_mask(
+            time,
+            VISION_ATTITUDE_RATE_HZ,
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # Sensor applicability
+    # ------------------------------------------------------------------
+
+    gps_aerial_applicable = (
+        time < GPS_HANDOFF_END
+    )
+
+    vision_position_applicable = (
+        results[
+            "immersion"
+        ]
+        <= VISION_POSITION_MAX_IMMERSION
+    )
+
+    depth_applicable = (
+        results[
+            "immersion"
+        ]
+        >= DEPTH_MIN_IMMERSION
+    )
+
+    sonar_underwater_applicable = (
+        underwater_mask
         &
-        (time < SUBMERGED_STABILIZATION_END_TIME)
+        (
+            results[
+                "immersion"
+            ]
+            >= SONAR_MIN_IMMERSION
+        )
     )
 
-    # --------------------------------------------------------------
+    vision_attitude_applicable = (
+        results[
+            "immersion"
+        ]
+        <= VISION_ATTITUDE_MAX_IMMERSION
+    )
+
+    # ------------------------------------------------------------------
+    # Impact
+    # ------------------------------------------------------------------
+
+    impact_metrics = (
+        calculate_impact_recovery_metrics(
+            time,
+            tracking_error,
+            results[
+                "impact_force"
+            ],
+            results[
+                "impact_active"
+            ],
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # Bias
+    # ------------------------------------------------------------------
+
+    estimated_bias_magnitude = (
+        np.linalg.norm(
+            results[
+                "estimated_acceleration_bias"
+            ],
+            axis=1,
+        )
+    )
+
+    injected_bias_magnitude = float(
+        np.linalg.norm(
+            IMU_ACCEL_BIAS_BODY
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # Underwater / GPS-denied estimation
+    # ------------------------------------------------------------------
+
+    underwater_estimation_error = (
+        position_estimation_error[
+            underwater_mask
+        ]
+    )
+
+    gps_denied_estimation_error = (
+        position_estimation_error[
+            gps_denied_mask
+        ]
+    )
+
+    # ------------------------------------------------------------------
     # Final state
-    # --------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     final_position = (
         position[-1]
@@ -3028,220 +4452,48 @@ def calculate_metrics(
         angles[-1]
     )
 
-    final_position_error = (
+    final_target_error = (
         target_position[-1]
         - final_position
     )
 
-    # --------------------------------------------------------------
-    # Motor statistics
-    # --------------------------------------------------------------
-
-    maximum_motor_thrust_value = (
-        maximum_motor_thrust()
-    )
-
-    maximum_rpm = float(
-        np.max(
-            rpm
-        )
+    final_estimation_error = (
+        results[
+            "estimated_position"
+        ][-1]
+        - final_position
     )
 
     maximum_motor_thrust_used = float(
         np.max(
-            motor_thrust
+            results[
+                "motor_thrust"
+            ]
         )
     )
 
-    if np.any(
-        submerged_mask
-    ):
-
-        underwater_speed = (
-            speed[
-                submerged_mask
+    maximum_rpm = float(
+        np.max(
+            results[
+                "rpm"
             ]
-        )
-
-    else:
-
-        underwater_speed = np.array(
-            [0.0]
-        )
-
-    # --------------------------------------------------------------
-    # Water-entry impact metrics
-    # --------------------------------------------------------------
-
-    if np.any(
-        water_entry_mask
-    ):
-
-        local_impact_force = (
-            impact_force[
-                water_entry_mask
-            ]
-        )
-
-        local_impact_speed = (
-            impact_normal_speed[
-                water_entry_mask
-            ]
-        )
-
-        local_acceleration = (
-            np.linalg.norm(
-                acceleration[
-                    water_entry_mask
-                ],
-                axis=1,
-            )
-        )
-
-        peak_force = float(
-            np.max(
-                local_impact_force
-            )
-        )
-
-        if peak_force > 0.0:
-
-            window_indices = np.flatnonzero(
-                water_entry_mask
-            )
-
-            peak_local_index = int(
-                np.argmax(
-                    local_impact_force
-                )
-            )
-
-            impact_peak_global_index = int(
-                window_indices[
-                    peak_local_index
-                ]
-            )
-
-            impact_peak_time = float(
-                time[
-                    impact_peak_global_index
-                ]
-            )
-
-        else:
-
-            impact_peak_time = None
-
-        active_indices = np.flatnonzero(
-            impact_active[
-                water_entry_mask
-            ]
-        )
-
-        if active_indices.size > 0:
-
-            window_indices = np.flatnonzero(
-                water_entry_mask
-            )
-
-            first_active = int(
-                active_indices[0]
-            )
-
-            last_active = int(
-                active_indices[-1]
-            )
-
-            active_times = time[
-                window_indices[
-                    first_active:
-                    last_active + 1
-                ]
-            ]
-
-            active_duration = float(
-                active_times[-1]
-                - active_times[0]
-                + DT
-            )
-
-        else:
-
-            active_duration = 0.0
-
-        impact_time = time[
-            water_entry_mask
-        ]
-
-        try:
-
-            impact_impulse = float(
-                np.trapezoid(
-                    local_impact_force,
-                    impact_time,
-                )
-            )
-
-        except AttributeError:
-
-            impact_impulse = float(
-                np.trapz(
-                    local_impact_force,
-                    impact_time,
-                )
-            )
-
-        peak_normal_speed = float(
-            np.max(
-                local_impact_speed
-            )
-        )
-
-        peak_impact_acceleration = float(
-            np.max(
-                local_acceleration
-            )
-        )
-
-    else:
-
-        impact_peak_time = None
-        active_duration = 0.0
-        impact_impulse = 0.0
-        peak_force = 0.0
-        peak_normal_speed = 0.0
-        peak_impact_acceleration = 0.0
-
-    # --------------------------------------------------------------
-    # Baseline-relative impact recovery
-    # --------------------------------------------------------------
-
-    impact_recovery_metrics = (
-        calculate_impact_recovery_metrics(
-            time,
-            error_magnitude,
-            impact_force,
-            impact_active,
         )
     )
 
-    # --------------------------------------------------------------
-    # Other phase metrics
-    # --------------------------------------------------------------
-
-    maximum_post_impact_error = (
-        _masked_max(
-            error_magnitude,
-            post_impact_stabilization_mask,
-        )
+    available_motor_thrust = (
+        maximum_motor_thrust()
     )
 
-    return {
+    metrics = {
+
+        # ==============================================================
+        # Tracking
+        # ==============================================================
 
         "Maximum 3-D tracking error (m)":
             float(
                 np.max(
-                    error_magnitude
+                    tracking_error
                 )
             ),
 
@@ -3249,7 +4501,7 @@ def calculate_metrics(
             float(
                 np.sqrt(
                     np.mean(
-                        error_magnitude**2
+                        tracking_error**2
                     )
                 )
             ),
@@ -3271,72 +4523,74 @@ def calculate_metrics(
             ),
 
         "Maximum pre-entry tracking error (m)":
-            _masked_max(
-                error_magnitude,
-                time
-                < WATER_DESCENT_START_TIME,
+            masked_max(
+                tracking_error,
+                time < WATER_DESCENT_START,
             ),
 
         "Maximum water-entry error (m)":
-            _masked_max(
-                error_magnitude,
+            masked_max(
+                tracking_error,
                 water_entry_mask,
             ),
 
         "Maximum submerged-stabilization error (m)":
-            _masked_max(
-                error_magnitude,
-                stabilization_mask,
+            masked_max(
+                tracking_error,
+                submerged_stabilization_mask,
             ),
 
         "RMS submerged-stabilization error (m)":
-            _masked_rms(
-                error_magnitude,
-                stabilization_mask,
+            masked_rms(
+                tracking_error,
+                submerged_stabilization_mask,
             ),
 
         "Maximum trajectory-1 error (m)":
-            _masked_max(
-                error_magnitude,
+            masked_max(
+                tracking_error,
                 trajectory_1_mask,
             ),
 
         "Maximum trajectory-2 error (m)":
-            _masked_max(
-                error_magnitude,
+            masked_max(
+                tracking_error,
                 trajectory_2_mask,
             ),
 
         "Maximum return-phase error (m)":
-            _masked_max(
-                error_magnitude,
+            masked_max(
+                tracking_error,
                 return_mask,
             ),
 
         "Maximum final-stabilization error (m)":
-            _masked_max(
-                error_magnitude,
-                final_hold_mask,
+            masked_max(
+                tracking_error,
+                final_mask,
             ),
 
         "RMS final-stabilization error (m)":
-            _masked_rms(
-                error_magnitude,
-                final_hold_mask,
+            masked_rms(
+                tracking_error,
+                final_mask,
             ),
 
         "Maximum final-stabilization speed (m/s)":
-            _masked_max(
+            masked_max(
                 speed,
-                final_hold_mask,
+                final_mask,
             ),
 
         "Maximum underwater speed (m/s)":
-            float(
-                np.max(
-                    underwater_speed
-                )
+            masked_max(
+                speed,
+                underwater_mask,
             ),
+
+        # ==============================================================
+        # Attitude
+        # ==============================================================
 
         "Maximum roll (deg)":
             float(
@@ -3365,6 +4619,10 @@ def calculate_metrics(
                 )
             ),
 
+        # ==============================================================
+        # Medium
+        # ==============================================================
+
         "Maximum immersion fraction":
             float(
                 np.max(
@@ -3386,92 +4644,121 @@ def calculate_metrics(
         "Maximum buoyancy (N)":
             float(
                 np.max(
-                    buoyancy
+                    results[
+                        "buoyancy"
+                    ]
                 )
             ),
 
         "Maximum hydrodynamic drag (N)":
             float(
                 np.max(
-                    drag
+                    results[
+                        "drag"
+                    ]
                 )
             ),
+
+        # ==============================================================
+        # Water entry
+        # ==============================================================
 
         "Maximum water-entry impact force (N)":
-            peak_force,
-
-        "Water-entry impact impulse (N s)":
-            impact_impulse,
-
-        "Maximum water-entry normal speed (m/s)":
-            peak_normal_speed,
-
-        "Water-entry active duration (s)":
-            active_duration,
-
-        "Peak water-entry acceleration (m/s^2)":
-            peak_impact_acceleration,
-
-        "Water-entry impact peak time (s)":
-            (
-                float(
-                    impact_peak_time
+            float(
+                np.max(
+                    results[
+                        "impact_force"
+                    ]
                 )
-                if impact_peak_time is not None
-                else float("nan")
             ),
 
-        "Impact pre-event RMS error (m)":
-            impact_recovery_metrics[
-                "Impact pre-event RMS error (m)"
-            ],
+        "Water-entry impact impulse (N s)":
+            float(
+                np.trapz(
+                    results[
+                        "impact_force"
+                    ],
+                    time,
+                )
+            ),
 
-        "Peak post-impact error (m)":
-            impact_recovery_metrics[
-                "Peak post-impact error (m)"
-            ],
+        "Maximum water-entry normal speed (m/s)":
+            float(
+                np.max(
+                    results[
+                        "impact_normal_speed"
+                    ]
+                )
+            ),
 
-        "Peak impact-induced error excursion (m)":
-            impact_recovery_metrics[
-                "Peak impact-induced error excursion (m)"
-            ],
+        "Water-entry active duration (s)":
+            float(
+                np.count_nonzero(
+                    results[
+                        "impact_active"
+                    ]
+                )
+                * DT
+            ),
 
-        "Impact recovery threshold (m)":
-            impact_recovery_metrics[
-                "Impact recovery threshold (m)"
-            ],
+        "Peak water-entry acceleration (m/s^2)":
+            masked_max(
+                np.linalg.norm(
+                    results[
+                        "acceleration"
+                    ],
+                    axis=1,
+                ),
+                water_entry_mask,
+            ),
 
-        "Impact response peak time (s)":
-            impact_recovery_metrics[
-                "Impact response peak time (s)"
-            ],
+        "Water-entry impact peak time (s)":
+            float(
+                time[
+                    np.argmax(
+                        results[
+                            "impact_force"
+                        ]
+                    )
+                ]
+            ),
 
-        "Impact recovery time to 10% residual (s)":
-            impact_recovery_metrics[
-                "Impact recovery time to 10% residual (s)"
-            ],
+        **impact_metrics,
 
         "Maximum post-impact stabilization error (m)":
-            maximum_post_impact_error,
+            masked_max(
+                tracking_error,
+                submerged_stabilization_mask,
+            ),
+
+        # ==============================================================
+        # Actuation
+        # ==============================================================
 
         "Maximum requested aerial-equivalent thrust (N)":
             float(
                 np.max(
-                    requested_thrust
+                    results[
+                        "requested_thrust"
+                    ]
                 )
             ),
 
         "Maximum commanded aerial thrust (N)":
             float(
                 np.max(
-                    commanded_thrust
+                    results[
+                        "commanded_thrust"
+                    ]
                 )
             ),
 
         "Maximum effective thrust (N)":
             float(
                 np.max(
-                    effective_thrust
+                    results[
+                        "effective_thrust"
+                    ]
                 )
             ),
 
@@ -3489,44 +4776,58 @@ def calculate_metrics(
 
         "Motor thrust margin (N)":
             float(
-                maximum_motor_thrust_value
+                available_motor_thrust
                 - maximum_motor_thrust_used
             ),
 
         "Torque saturation events":
             int(
                 np.count_nonzero(
-                    torque_saturation
+                    results[
+                        "torque_saturation"
+                    ]
                 )
             ),
 
         "Collective thrust clipping events":
             int(
                 np.count_nonzero(
-                    collective_clipped
+                    results[
+                        "collective_clipped"
+                    ]
                 )
             ),
 
         "Minimum torque allocation scale":
             float(
                 np.min(
-                    torque_scale
+                    results[
+                        "torque_scale"
+                    ]
                 )
             ),
 
         "Maximum commanded force-direction error (deg)":
             float(
                 np.max(
-                    commanded_direction_error
+                    results[
+                        "commanded_direction_error"
+                    ]
                 )
             ),
 
         "Maximum actual thrust-direction error (deg)":
             float(
                 np.max(
-                    thrust_direction_error
+                    results[
+                        "actual_direction_error"
+                    ]
                 )
             ),
+
+        # ==============================================================
+        # Morphology
+        # ==============================================================
 
         "Minimum arm length (m)":
             float(
@@ -3575,10 +4876,204 @@ def calculate_metrics(
                 )
             ),
 
+        # ==============================================================
+        # State estimation
+        # ==============================================================
+
+        "Maximum position estimation error (m)":
+            float(
+                np.max(
+                    position_estimation_error
+                )
+            ),
+
+        "RMS position estimation error (m)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        position_estimation_error**2
+                    )
+                )
+            ),
+
+        "Maximum underwater position estimation error (m)":
+            float(
+                np.max(
+                    underwater_estimation_error
+                )
+            ),
+
+        "RMS underwater position estimation error (m)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        underwater_estimation_error**2
+                    )
+                )
+            ),
+
+        "Maximum GPS-denied position estimation error (m)":
+            float(
+                np.max(
+                    gps_denied_estimation_error
+                )
+            ),
+
+        "RMS GPS-denied position estimation error (m)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        gps_denied_estimation_error**2
+                    )
+                )
+            ),
+
+        "Maximum velocity estimation error (m/s)":
+            float(
+                np.max(
+                    velocity_estimation_error
+                )
+            ),
+
+        "RMS velocity estimation error (m/s)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        velocity_estimation_error**2
+                    )
+                )
+            ),
+
+        "Maximum estimated accel-bias magnitude (m/s^2)":
+            float(
+                np.max(
+                    estimated_bias_magnitude
+                )
+            ),
+
+        "Injected accel-bias magnitude (m/s^2)":
+            injected_bias_magnitude,
+
+        "Final estimated accel-bias magnitude (m/s^2)":
+            float(
+                estimated_bias_magnitude[-1]
+            ),
+
+        "Maximum attitude estimation error (deg)":
+            float(
+                np.max(
+                    results[
+                        "attitude_estimation_error"
+                    ]
+                )
+            ),
+
+        "RMS attitude estimation error (deg)":
+            float(
+                np.sqrt(
+                    np.mean(
+                        results[
+                            "attitude_estimation_error"
+                        ]**2
+                    )
+                )
+            ),
+
+        "Minimum estimator confidence":
+            float(
+                np.min(
+                    results[
+                        "estimator_confidence"
+                    ]
+                )
+            ),
+
+        "Mean estimator confidence":
+            float(
+                np.mean(
+                    results[
+                        "estimator_confidence"
+                    ]
+                )
+            ),
+
+        # ==============================================================
+        # Sensor availability
+        #
+        # These are percentages of scheduled opportunities in the
+        # applicable operating regime, not percentages of all
+        # simulation time steps.
+        # ==============================================================
+
+        "Aerial GPS availability (%)":
+            availability_percentage(
+                results[
+                    "gps_available"
+                ],
+                scheduled_gps,
+                gps_aerial_applicable,
+            ),
+
+        "GPS availability underwater (%)":
+            availability_percentage(
+                results[
+                    "gps_available"
+                ],
+                scheduled_gps,
+                underwater_mask,
+            ),
+
+        "Vision position availability (%)":
+            availability_percentage(
+                results[
+                    "vision_position_available"
+                ],
+                scheduled_vision_position,
+                vision_position_applicable,
+            ),
+
+        "Depth sensor availability (%)":
+            availability_percentage(
+                results[
+                    "depth_available"
+                ],
+                scheduled_depth,
+                depth_applicable,
+            ),
+
+        "Sonar-like availability underwater (%)":
+            availability_percentage(
+                results[
+                    "sonar_available"
+                ],
+                scheduled_sonar,
+                sonar_underwater_applicable,
+            ),
+
+        "Vision attitude availability (%)":
+            availability_percentage(
+                results[
+                    "vision_attitude_available"
+                ],
+                scheduled_vision_attitude,
+                vision_attitude_applicable,
+            ),
+
+        # ==============================================================
+        # Final state
+        # ==============================================================
+
+        "Final position estimation error (m)":
+            float(
+                np.linalg.norm(
+                    final_estimation_error
+                )
+            ),
+
         "Final position error (m)":
             float(
                 np.linalg.norm(
-                    final_position_error
+                    final_target_error
                 )
             ),
 
@@ -3634,42 +5129,50 @@ def calculate_metrics(
             ),
     }
 
+    return metrics
+
 
 # ======================================================================
-# PLOT SAVE HELPER
+# PLOT HELPER
 # ======================================================================
 
 def save_figure(
     fig,
     filename,
 ):
-    output_path = os.path.join(
+    path = os.path.join(
         RESULTS_DIRECTORY,
         filename,
     )
 
     fig.savefig(
-        output_path,
+        path,
         dpi=200,
         bbox_inches="tight",
     )
 
-    plt.close(fig)
+    plt.close(
+        fig
+    )
 
 
 # ======================================================================
 # POSITION PLOT
 # ======================================================================
 
-def plot_position_results(
+def plot_position(
     results,
 ):
     time = results[
         "time"
     ]
 
-    position = results[
+    true_position = results[
         "position"
+    ]
+
+    estimated_position = results[
+        "estimated_position"
     ]
 
     target_position = results[
@@ -3679,19 +5182,34 @@ def plot_position_results(
     fig, axes = plt.subplots(
         3,
         1,
-        figsize=(13, 10),
+        figsize=(
+            13,
+            10,
+        ),
         sharex=True,
     )
 
     labels = [
-        ("X", 0),
-        ("Y", 1),
-        ("Z", 2),
+        (
+            "X",
+            0,
+        ),
+        (
+            "Y",
+            1,
+        ),
+        (
+            "Z",
+            2,
+        ),
     ]
 
-    for ax, (
-        label,
-        index,
+    for (
+        ax,
+        (
+            label,
+            index,
+        ),
     ) in zip(
         axes,
         labels,
@@ -3699,13 +5217,29 @@ def plot_position_results(
 
         ax.plot(
             time,
-            position[:, index],
-            label=f"Actual {label}",
+            true_position[
+                :,
+                index
+            ],
+            label=f"True {label}",
         )
 
         ax.plot(
             time,
-            target_position[:, index],
+            estimated_position[
+                :,
+                index
+            ],
+            ":",
+            label=f"Estimated {label}",
+        )
+
+        ax.plot(
+            time,
+            target_position[
+                :,
+                index
+            ],
             "--",
             label=f"Target {label}",
         )
@@ -3714,7 +5248,7 @@ def plot_position_results(
 
             ax.axhline(
                 WATER_SURFACE_Z,
-                linestyle=":",
+                linestyle="-.",
                 label="Water surface",
             )
 
@@ -3722,24 +5256,28 @@ def plot_position_results(
             f"{label} Position (m)"
         )
 
-        ax.grid(True)
+        ax.grid(
+            True
+        )
 
         ax.legend()
 
-    axes[-1].set_xlabel(
+    axes[
+        -1
+    ].set_xlabel(
         "Time (s)"
     )
 
     fig.suptitle(
-        "MorphoAqua - Stage 5B-2 "
-        "Integrated Mission Position Tracking"
+        "MorphoAqua - Stage 5B-3 "
+        "True, Estimated and Target Position"
     )
 
     plt.tight_layout()
 
     save_figure(
         fig,
-        "Stage_5B2_position_tracking.png",
+        "Stage_5B3_position_estimation_tracking.png",
     )
 
 
@@ -3750,8 +5288,12 @@ def plot_position_results(
 def plot_3d_trajectory(
     results,
 ):
-    position = results[
+    true_position = results[
         "position"
+    ]
+
+    estimated_position = results[
+        "estimated_position"
     ]
 
     target_position = results[
@@ -3759,7 +5301,10 @@ def plot_3d_trajectory(
     ]
 
     fig = plt.figure(
-        figsize=(12, 10)
+        figsize=(
+            12,
+            10,
+        )
     )
 
     ax = fig.add_subplot(
@@ -3768,10 +5313,18 @@ def plot_3d_trajectory(
     )
 
     ax.plot(
-        position[:, 0],
-        position[:, 1],
-        position[:, 2],
-        label="Actual trajectory",
+        true_position[:, 0],
+        true_position[:, 1],
+        true_position[:, 2],
+        label="True trajectory",
+    )
+
+    ax.plot(
+        estimated_position[:, 0],
+        estimated_position[:, 1],
+        estimated_position[:, 2],
+        ":",
+        label="Estimated trajectory",
     )
 
     ax.plot(
@@ -3783,19 +5336,49 @@ def plot_3d_trajectory(
     )
 
     ax.scatter(
-        [position[0, 0]],
-        [position[0, 1]],
-        [position[0, 2]],
+        [
+            true_position[
+                0,
+                0
+            ]
+        ],
+        [
+            true_position[
+                0,
+                1
+            ]
+        ],
+        [
+            true_position[
+                0,
+                2
+            ]
+        ],
         s=60,
         label="Mission start",
     )
 
     ax.scatter(
-        [position[-1, 0]],
-        [position[-1, 1]],
-        [position[-1, 2]],
+        [
+            true_position[
+                -1,
+                0
+            ]
+        ],
+        [
+            true_position[
+                -1,
+                1
+            ]
+        ],
+        [
+            true_position[
+                -1,
+                2
+            ]
+        ],
         s=60,
-        label="Final state",
+        label="Final true state",
     )
 
     ax.set_xlabel(
@@ -3811,24 +5394,26 @@ def plot_3d_trajectory(
     )
 
     ax.set_title(
-        "MorphoAqua - Stage 5B-2 "
-        "Integrated Aerial-Aquatic 3-D Trajectory"
+        "MorphoAqua - Stage 5B-3 "
+        "True vs Estimated 3-D Trajectory"
     )
 
     ax.legend()
 
-    ax.grid(True)
+    ax.grid(
+        True
+    )
 
     plt.tight_layout()
 
     save_figure(
         fig,
-        "Stage_5B2_3D_trajectory.png",
+        "Stage_5B3_3D_true_estimated_trajectory.png",
     )
 
 
 # ======================================================================
-# CONTROL / MEDIUM RESPONSE PLOT
+# CONTROL / MEDIUM RESPONSE
 # ======================================================================
 
 def plot_control_response(
@@ -3850,57 +5435,17 @@ def plot_control_response(
         "desired_angles"
     ]
 
-    requested_thrust = results[
-        "requested_thrust"
-    ]
-
-    commanded_thrust = results[
-        "commanded_thrust"
-    ]
-
-    effective_thrust = results[
-        "effective_thrust"
-    ]
-
-    torque = results[
-        "torque"
-    ]
-
-    rpm = results[
-        "rpm"
-    ]
-
-    immersion = results[
-        "immersion"
-    ]
-
-    propulsion_effectiveness = results[
-        "propulsion_effectiveness"
-    ]
-
-    buoyancy = results[
-        "buoyancy"
-    ]
-
-    drag = results[
-        "drag"
-    ]
-
-    impact_force = results[
-        "impact_force"
-    ]
-
     fig, axes = plt.subplots(
         7,
         1,
-        figsize=(13, 23),
+        figsize=(
+            13,
+            23,
+        ),
         sharex=True,
     )
 
-    # --------------------------------------------------------------
     # Velocity
-    # --------------------------------------------------------------
-
     axes[0].plot(
         time,
         velocity[:, 0],
@@ -3924,19 +5469,15 @@ def plot_control_response(
     )
 
     axes[0].legend()
-
     axes[0].grid(True)
 
-    # --------------------------------------------------------------
     # Attitude
-    # --------------------------------------------------------------
-
     axes[1].plot(
         time,
         np.rad2deg(
             angles[:, 0]
         ),
-        label="Actual Roll",
+        label="True Roll",
     )
 
     axes[1].plot(
@@ -3953,7 +5494,7 @@ def plot_control_response(
         np.rad2deg(
             angles[:, 1]
         ),
-        label="Actual Pitch",
+        label="True Pitch",
     )
 
     axes[1].plot(
@@ -3983,26 +5524,29 @@ def plot_control_response(
 
     axes[1].grid(True)
 
-    # --------------------------------------------------------------
     # Thrust
-    # --------------------------------------------------------------
-
     axes[2].plot(
         time,
-        requested_thrust,
+        results[
+            "requested_thrust"
+        ],
         label="Requested aerial-equivalent thrust",
     )
 
     axes[2].plot(
         time,
-        commanded_thrust,
+        results[
+            "commanded_thrust"
+        ],
         "--",
         label="Commanded aerial thrust",
     )
 
     axes[2].plot(
         time,
-        effective_thrust,
+        results[
+            "effective_thrust"
+        ],
         label="Effective thrust",
     )
 
@@ -4017,28 +5561,30 @@ def plot_control_response(
     )
 
     axes[2].legend()
-
     axes[2].grid(True)
 
-    # --------------------------------------------------------------
     # Torque
-    # --------------------------------------------------------------
-
     axes[3].plot(
         time,
-        torque[:, 0],
+        results[
+            "torque"
+        ][:, 0],
         label="Roll torque",
     )
 
     axes[3].plot(
         time,
-        torque[:, 1],
+        results[
+            "torque"
+        ][:, 1],
         label="Pitch torque",
     )
 
     axes[3].plot(
         time,
-        torque[:, 2],
+        results[
+            "torque"
+        ][:, 2],
         label="Yaw torque",
     )
 
@@ -4047,18 +5593,18 @@ def plot_control_response(
     )
 
     axes[3].legend()
-
     axes[3].grid(True)
 
-    # --------------------------------------------------------------
     # RPM
-    # --------------------------------------------------------------
-
-    for motor_index in range(4):
+    for motor_index in range(
+        4
+    ):
 
         axes[4].plot(
             time,
-            rpm[:, motor_index],
+            results[
+                "rpm"
+            ][:, motor_index],
             label=f"Motor {motor_index + 1}",
         )
 
@@ -4078,51 +5624,63 @@ def plot_control_response(
 
     axes[4].grid(True)
 
-    # --------------------------------------------------------------
-    # Immersion / propulsion
-    # --------------------------------------------------------------
-
+    # Medium
     axes[5].plot(
         time,
-        immersion,
-        label="Immersion fraction",
+        results[
+            "immersion"
+        ],
+        label="True immersion",
     )
 
     axes[5].plot(
         time,
-        propulsion_effectiveness,
+        results[
+            "estimated_immersion"
+        ],
+        ":",
+        label="Estimated immersion",
+    )
+
+    axes[5].plot(
+        time,
+        results[
+            "propulsion_effectiveness"
+        ],
         "--",
         label="Propulsion effectiveness",
     )
 
     axes[5].set_ylabel(
-        "Immersion / effectiveness"
+        "Medium state"
     )
 
     axes[5].legend()
-
     axes[5].grid(True)
 
-    # --------------------------------------------------------------
-    # Water forces
-    # --------------------------------------------------------------
-
+    # Forces
     axes[6].plot(
         time,
-        buoyancy,
+        results[
+            "buoyancy"
+        ],
         label="Buoyancy",
     )
 
     axes[6].plot(
         time,
-        drag,
+        results[
+            "drag"
+        ],
         "--",
         label="Hydrodynamic drag",
     )
 
     axes[6].plot(
         time,
-        impact_force,
+        results[
+            "impact_force"
+        ],
         ":",
         label="Water-entry impact",
     )
@@ -4136,12 +5694,11 @@ def plot_control_response(
     )
 
     axes[6].legend()
-
     axes[6].grid(True)
 
     fig.suptitle(
-        "MorphoAqua - Stage 5B-2 "
-        "Integrated Control, Actuation and Medium Response"
+        "MorphoAqua - Stage 5B-3 "
+        "Control and Medium Response"
     )
 
     plt.tight_layout(
@@ -4155,12 +5712,12 @@ def plot_control_response(
 
     save_figure(
         fig,
-        "Stage_5B2_control_medium_response.png",
+        "Stage_5B3_control_medium_response.png",
     )
 
 
 # ======================================================================
-# MORPHOLOGY / INERTIA PLOT
+# MORPHOLOGY PLOT
 # ======================================================================
 
 def plot_morphology(
@@ -4170,45 +5727,38 @@ def plot_morphology(
         "time"
     ]
 
-    morphology = results[
-        "morphology"
-    ]
-
-    morphology_rate = results[
-        "morphology_rate"
-    ]
-
-    arm_length = results[
-        "arm_length"
-    ]
-
-    inertia_scale = results[
-        "inertia_scale"
-    ]
-
     fig, axes = plt.subplots(
         2,
         1,
-        figsize=(13, 8),
+        figsize=(
+            13,
+            8,
+        ),
         sharex=True,
     )
 
     axes[0].plot(
         time,
-        arm_length,
+        results[
+            "arm_length"
+        ],
         label="Arm length",
     )
 
     axes[0].plot(
         time,
-        morphology,
+        results[
+            "morphology"
+        ],
         "--",
         label="Morphology state",
     )
 
     axes[0].plot(
         time,
-        morphology_rate,
+        results[
+            "morphology_rate"
+        ],
         ":",
         label="Morphology rate",
     )
@@ -4218,12 +5768,13 @@ def plot_morphology(
     )
 
     axes[0].legend()
-
     axes[0].grid(True)
 
     axes[1].plot(
         time,
-        inertia_scale,
+        results[
+            "inertia_scale"
+        ],
         label="Inertia scale",
     )
 
@@ -4236,11 +5787,10 @@ def plot_morphology(
     )
 
     axes[1].legend()
-
     axes[1].grid(True)
 
     fig.suptitle(
-        "MorphoAqua - Stage 5B-2 "
+        "MorphoAqua - Stage 5B-3 "
         "Morphology and Time-Varying Inertia"
     )
 
@@ -4248,15 +5798,15 @@ def plot_morphology(
 
     save_figure(
         fig,
-        "Stage_5B2_morphology_inertia.png",
+        "Stage_5B3_morphology_inertia.png",
     )
 
 
 # ======================================================================
-# DIRECTION / IMPACT RESPONSE PLOT
+# DIRECTION / IMPACT PLOT
 # ======================================================================
 
-def plot_direction_and_impact(
+def plot_direction_impact(
     results,
 ):
     time = results[
@@ -4275,13 +5825,12 @@ def plot_direction_and_impact(
     fig, axes = plt.subplots(
         3,
         1,
-        figsize=(13, 12),
+        figsize=(
+            13,
+            12,
+        ),
         sharex=True,
     )
-
-    # --------------------------------------------------------------
-    # Direction error
-    # --------------------------------------------------------------
 
     axes[0].plot(
         time,
@@ -4294,7 +5843,7 @@ def plot_direction_and_impact(
     axes[0].plot(
         time,
         results[
-            "thrust_direction_error"
+            "actual_direction_error"
         ],
         "--",
         label="Actual thrust-direction error",
@@ -4305,12 +5854,7 @@ def plot_direction_and_impact(
     )
 
     axes[0].legend()
-
     axes[0].grid(True)
-
-    # --------------------------------------------------------------
-    # Water-entry response
-    # --------------------------------------------------------------
 
     axes[1].plot(
         time,
@@ -4330,16 +5874,11 @@ def plot_direction_and_impact(
     )
 
     axes[1].set_ylabel(
-        "Impact force / normal speed"
+        "Impact / speed"
     )
 
     axes[1].legend()
-
     axes[1].grid(True)
-
-    # --------------------------------------------------------------
-    # Allocation / acceleration
-    # --------------------------------------------------------------
 
     axes[2].plot(
         time,
@@ -4365,11 +5904,10 @@ def plot_direction_and_impact(
     )
 
     axes[2].legend()
-
     axes[2].grid(True)
 
     fig.suptitle(
-        "MorphoAqua - Stage 5B-2 "
+        "MorphoAqua - Stage 5B-3 "
         "Direction Feasibility and Water-Entry Response"
     )
 
@@ -4377,7 +5915,279 @@ def plot_direction_and_impact(
 
     save_figure(
         fig,
-        "Stage_5B2_direction_impact_response.png",
+        "Stage_5B3_direction_impact_response.png",
+    )
+
+
+# ======================================================================
+# SENSOR / ESTIMATION PLOT
+# ======================================================================
+
+def plot_sensor_estimation(
+    results,
+):
+    time = results[
+        "time"
+    ]
+
+    fig, axes = plt.subplots(
+        5,
+        1,
+        figsize=(
+            13,
+            18,
+        ),
+        sharex=True,
+    )
+
+    # --------------------------------------------------------------
+    # Position / velocity estimation
+    # --------------------------------------------------------------
+
+    axes[0].plot(
+        time,
+        results[
+            "position_estimation_error"
+        ],
+        label="3-D position estimation error",
+    )
+
+    axes[0].plot(
+        time,
+        results[
+            "velocity_estimation_error"
+        ],
+        "--",
+        label="Velocity estimation error",
+    )
+
+    axes[0].set_ylabel(
+        "Error"
+    )
+
+    axes[0].legend()
+    axes[0].grid(True)
+
+    # --------------------------------------------------------------
+    # Attitude
+    # --------------------------------------------------------------
+
+    axes[1].plot(
+        time,
+        results[
+            "attitude_estimation_error"
+        ],
+        label="Attitude estimation error",
+    )
+
+    axes[1].set_ylabel(
+        "Angle error (deg)"
+    )
+
+    axes[1].legend()
+    axes[1].grid(True)
+
+    # --------------------------------------------------------------
+    # Sensor availability
+    # --------------------------------------------------------------
+
+    sensor_curves = [
+        (
+            "gps_available",
+            "GPS",
+        ),
+        (
+            "vision_position_available",
+            "Vision position",
+        ),
+        (
+            "depth_available",
+            "Depth",
+        ),
+        (
+            "sonar_available",
+            "Sonar-like position",
+        ),
+        (
+            "vision_attitude_available",
+            "Vision attitude",
+        ),
+    ]
+
+    for (
+        key,
+        label,
+    ) in sensor_curves:
+
+        axes[2].plot(
+            time,
+            results[
+                key
+            ].astype(
+                float
+            ),
+            label=label,
+        )
+
+    axes[2].set_ylabel(
+        "Available (0/1)"
+    )
+
+    axes[2].legend(
+        ncol=3
+    )
+
+    axes[2].grid(True)
+
+    # --------------------------------------------------------------
+    # Confidence / covariance
+    # --------------------------------------------------------------
+
+    axes[3].plot(
+        time,
+        results[
+            "estimator_confidence"
+        ],
+        label="Estimator confidence",
+    )
+
+    axes[3].plot(
+        time,
+        results[
+            "position_covariance_trace"
+        ],
+        "--",
+        label="Position covariance trace",
+    )
+
+    axes[3].set_ylabel(
+        "Confidence / covariance"
+    )
+
+    axes[3].legend()
+    axes[3].grid(True)
+
+    # --------------------------------------------------------------
+    # Estimated body-frame accelerometer bias
+    # --------------------------------------------------------------
+
+    bias = results[
+        "estimated_acceleration_bias"
+    ]
+
+    axes[4].plot(
+        time,
+        bias[:, 0],
+        label="Estimated bax",
+    )
+
+    axes[4].plot(
+        time,
+        bias[:, 1],
+        label="Estimated bay",
+    )
+
+    axes[4].plot(
+        time,
+        bias[:, 2],
+        label="Estimated baz",
+    )
+
+    axes[4].axhline(
+        IMU_ACCEL_BIAS_BODY[0],
+        linestyle=":",
+        label="True bax",
+    )
+
+    axes[4].axhline(
+        IMU_ACCEL_BIAS_BODY[1],
+        linestyle=":",
+        label="True bay",
+    )
+
+    axes[4].axhline(
+        IMU_ACCEL_BIAS_BODY[2],
+        linestyle=":",
+        label="True baz",
+    )
+
+    axes[4].set_ylabel(
+        "Accel bias (m/s²)"
+    )
+
+    axes[4].set_xlabel(
+        "Time (s)"
+    )
+
+    axes[4].legend(
+        ncol=3
+    )
+
+    axes[4].grid(True)
+
+    fig.suptitle(
+        "MorphoAqua - Stage 5B-3 "
+        "Simulated Sensors, Estimation and Bias"
+    )
+
+    plt.tight_layout()
+
+    save_figure(
+        fig,
+        "Stage_5B3_sensor_estimation.png",
+    )
+
+
+# ======================================================================
+# REFERENCE TRAJECTORY CHECK
+# ======================================================================
+
+def print_reference_checkpoints():
+
+    checkpoint_times = [
+        0.0,
+        3.0,
+        6.0,
+        8.0,
+        10.0,
+        11.0,
+        12.5,
+        14.0,
+        18.0,
+        23.0,
+        29.0,
+        33.0,
+        35.0,
+    ]
+
+    print(
+        "REFERENCE TRAJECTORY CHECKPOINTS"
+    )
+
+    print(
+        "-" * 76
+    )
+
+    for t in checkpoint_times:
+
+        (
+            position,
+            velocity,
+            _acceleration,
+        ) = mission_trajectory(
+            t
+        )
+
+        print(
+            f"t = {t:5.1f} s | "
+            f"X = {position[0]:8.4f} | "
+            f"Y = {position[1]:8.4f} | "
+            f"Z = {position[2]:8.4f} | "
+            f"|V| = {np.linalg.norm(velocity):8.4f}"
+        )
+
+    print(
+        "-" * 76
     )
 
 
@@ -4392,11 +6202,11 @@ def main():
     )
 
     print(
-        "MORPHOAQUA - STAGE 5B-2"
+        "MORPHOAQUA - STAGE 5B-3"
     )
 
     print(
-        "INTEGRATED AERIAL -> WATER -> UNDERWATER MISSION"
+        "SIMULATED SENSING + GPS LOSS + STATE ESTIMATION"
     )
 
     print(
@@ -4452,56 +6262,53 @@ def main():
     print()
 
     print(
-        "Physics:"
+        "Sensor model:"
     )
 
     print(
-        "6-DOF rigid-body dynamics"
+        "IMU-like acceleration + gyro"
     )
 
     print(
-        "Morphology-dependent inertia with dI/dt compensation"
+        "GPS-like aerial position"
     )
 
     print(
-        "Air-water immersion model"
+        "GPS degradation from 10-11 s and complete loss after 11 s"
     )
 
     print(
-        "Buoyancy + quadratic hydrodynamic drag"
+        "Vision-like position and attitude"
     )
 
     print(
-        "Medium-dependent propulsion effectiveness"
+        "Depth sensing during immersion"
     )
 
     print(
-        "Motor dynamics + actuator saturation reporting"
-    )
-
-    print(
-        "Reduced-order analytical water-entry impact disturbance"
-    )
-
-    print(
-        "Cross-medium propulsion with interface penalty"
+        "Sonar-like local 3-D position fixes underwater"
     )
 
     print()
 
     print(
-        "Impact recovery definition:"
+        "Estimator:"
     )
 
     print(
-        "Return to baseline + "
-        f"{IMPACT_RECOVERY_RESIDUAL_FRACTION * 100:.0f}% "
-        "of the impact-induced tracking-error excursion."
+        "9-state position/velocity/body-frame acceleration-bias KF"
     )
 
     print(
-        f"Required persistence: "
-        f"{IMPACT_RECOVERY_PERSISTENCE_TIME:.2f} s"
+        "Gyro-integrated attitude estimate with visual correction"
+    )
+
+    print(
+        "Innovation gating"
+    )
+
+    print(
+        "Controller feedback source: estimated state"
     )
 
     print()
@@ -4511,27 +6318,24 @@ def main():
     )
 
     print(
-        "Hydrodynamic and water-entry quantities are "
-        "parameterized simulation assumptions."
+        "Accelerometer bias is modeled in the BODY FRAME."
     )
 
     print(
-        "Water-entry model = reduced-order analytical proxy, "
-        "not CFD/VoF."
+        "All sensor signals are simulated numerical measurements."
     )
 
     print(
-        "Impact force is not supplied to the controller "
-        "as feedforward."
+        "No physical sensor hardware is claimed."
     )
 
     print(
-        "Matplotlib backend = Agg."
+        "Adaptive/predictive control is reserved for Stage 5B-4."
     )
 
     print()
 
-    validate_reference_trajectory()
+    print_reference_checkpoints()
 
     print()
 
@@ -4548,14 +6352,17 @@ def main():
     print()
 
     print(
-        "STAGE 5B-2 PERFORMANCE METRICS"
+        "STAGE 5B-3 PERFORMANCE METRICS"
     )
 
     print(
         "-" * 76
     )
 
-    for name, value in metrics.items():
+    for (
+        name,
+        value,
+    ) in metrics.items():
 
         if isinstance(
             value,
@@ -4596,6 +6403,11 @@ def main():
     )
 
     print(
+        "State feedback: estimated position, velocity, "
+        "attitude and angular rate"
+    )
+
+    print(
         "Force feasibility: attitude-limit-aware "
         "force projection"
     )
@@ -4604,18 +6416,9 @@ def main():
         "Degrees of freedom: 6"
     )
 
-    print(
-        "Morphology: compact -> extended -> compact "
-        "-> compact underwater"
-    )
-
-    print(
-        "Medium model: air / interface / fully submerged"
-    )
-
     print()
 
-    plot_position_results(
+    plot_position(
         results
     )
 
@@ -4631,7 +6434,11 @@ def main():
         results
     )
 
-    plot_direction_and_impact(
+    plot_direction_impact(
+        results
+    )
+
+    plot_sensor_estimation(
         results
     )
 
@@ -4639,45 +6446,28 @@ def main():
         "Results saved to:"
     )
 
-    print(
-        os.path.join(
-            RESULTS_DIRECTORY,
-            "Stage_5B2_position_tracking.png",
-        )
-    )
+    output_files = [
+        "Stage_5B3_position_estimation_tracking.png",
+        "Stage_5B3_3D_true_estimated_trajectory.png",
+        "Stage_5B3_control_medium_response.png",
+        "Stage_5B3_morphology_inertia.png",
+        "Stage_5B3_direction_impact_response.png",
+        "Stage_5B3_sensor_estimation.png",
+    ]
 
-    print(
-        os.path.join(
-            RESULTS_DIRECTORY,
-            "Stage_5B2_3D_trajectory.png",
-        )
-    )
+    for filename in output_files:
 
-    print(
-        os.path.join(
-            RESULTS_DIRECTORY,
-            "Stage_5B2_control_medium_response.png",
+        print(
+            os.path.join(
+                RESULTS_DIRECTORY,
+                filename,
+            )
         )
-    )
-
-    print(
-        os.path.join(
-            RESULTS_DIRECTORY,
-            "Stage_5B2_morphology_inertia.png",
-        )
-    )
-
-    print(
-        os.path.join(
-            RESULTS_DIRECTORY,
-            "Stage_5B2_direction_impact_response.png",
-        )
-    )
 
     print()
 
     print(
-        "Stage 5B-2 simulation completed."
+        "Stage 5B-3 simulation completed."
     )
 
 
