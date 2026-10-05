@@ -1,8 +1,10 @@
 """
-MorphoAqua - Stage 5B-4 (CORRECTED)
-Actuator-Aware Adaptive / Predictive Control
+MorphoAqua - Stage 5C
+Robust Cross-Medium Control
 
-Stage 5B-4 retains the validated 35 s Stage 5B-3 mission:
+Frozen Stage 5C controller + physical underwater-current disturbance and bounded robustness analysis
+
+Stage 5C retains the validated 35 s Stage 5C mission and controller:
     - simulated sensors
     - GPS loss / underwater localization
     - 9-state position/velocity/body-frame accelerometer-bias KF
@@ -12,7 +14,7 @@ Stage 5B-4 retains the validated 35 s Stage 5B-3 mission:
     - reduced-order water-entry impact
     - motor dynamics
 
-New in Stage 5B-4:
+Stage 5C adds ONLY:
     - bounded adaptive position gain scheduling
     - bounded adaptive velocity gain scheduling
     - bounded adaptive attitude gain scheduling
@@ -229,6 +231,29 @@ WATER_PROPULSION_EFFECTIVENESS = 0.30
 
 INTERFACE_PROPULSION_PENALTY = 0.015
 
+
+# =============================================================================
+# STAGE 5C -- UNDERWATER CURRENT / ROBUSTNESS
+# =============================================================================
+
+# The mission trajectory and Stage 5C controller are unchanged.
+# The current is a plant-side disturbance: the controller does NOT receive
+# the current vector. Hydrodynamic drag uses relative water velocity:
+#     v_relative = v_vehicle - v_water
+#
+# Current ramps smoothly after substantial submergence to avoid introducing
+# an artificial numerical impulse at the water boundary.
+STAGE5C_CURRENT_VECTOR = np.array([0.10, -0.06, 0.0])   # m/s
+STAGE5C_CURRENT_START_IMMERSION = 0.80
+STAGE5C_CURRENT_RAMP_TIME = 1.0
+
+# Bounded uncertainty used only in the robustness experiment. Nominal and
+# single-disturbance runs keep these factors exactly 1.0.
+STAGE5C_DRAG_UNCERTAINTY = 0.15
+STAGE5C_PROPULSION_UNCERTAINTY = 0.10
+STAGE5C_CURRENT_UNCERTAINTY = 0.20
+STAGE5C_MONTE_CARLO_RUNS = 4
+STAGE5C_MONTE_CARLO_SEED = 20261005
 
 # =============================================================================
 # WATER-ENTRY DISTURBANCE
@@ -486,21 +511,56 @@ def immersion_rate(z, vz):
     return smoothstep(u)[1] * (-1.0 / (upper - lower)) * vz
 
 
-def medium_effects(position, velocity):
+def stage5c_water_current(t, immersion, current_vector=None):
+    """Return the physical water-current vector seen by the vehicle.
 
+    The controller never receives this value. It is used only by the plant
+    hydrodynamic model. Current is restricted to the underwater regime and
+    smoothly ramps on once the vehicle is substantially submerged.
+    """
+    if current_vector is None:
+        current_vector = STAGE5C_CURRENT_VECTOR
+
+    if immersion <= STAGE5C_CURRENT_START_IMMERSION:
+        return np.zeros(3)
+
+    ramp = np.clip(
+        (immersion - STAGE5C_CURRENT_START_IMMERSION)
+        / max(1.0 - STAGE5C_CURRENT_START_IMMERSION, 1e-9),
+        0.0, 1.0,
+    )
+    return np.asarray(current_vector, dtype=float) * ramp
+
+
+def medium_effects(
+    position,
+    velocity,
+    water_current=None,
+    drag_coefficient=WATER_DRAG_COEFFICIENT,
+    propulsion_scale=1.0,
+):
+    """Compute medium forces.
+
+    If water_current is supplied, hydrodynamic drag is computed from relative
+    water velocity. This is the Stage 5C plant model. The controller calls
+    this function without a current, so it remains unaware of the disturbance.
+    """
     imm = immersion_fraction(position[2])
 
     buoyancy = WATER_DENSITY * GRAVITY * DISPLACED_VOLUME * imm
     buoyancy_force = np.array([0.0, 0.0, buoyancy])
 
-    speed = np.linalg.norm(velocity)
+    if water_current is None:
+        water_current = np.zeros(3)
+    relative_velocity = np.asarray(velocity) - np.asarray(water_current)
+    speed = np.linalg.norm(relative_velocity)
 
     if imm > 0.0 and speed > 1e-12:
         drag_mag = (
-            0.5 * WATER_DENSITY * WATER_DRAG_COEFFICIENT
+            0.5 * WATER_DENSITY * float(drag_coefficient)
             * WATER_REFERENCE_AREA * speed**2 * imm
         )
-        drag = -drag_mag * velocity / speed
+        drag = -drag_mag * relative_velocity / speed
     else:
         drag_mag = 0.0
         drag = np.zeros(3)
@@ -513,12 +573,13 @@ def medium_effects(position, velocity):
     interface_factor = 4.0 * imm * (1.0 - imm)
 
     propulsion_efficiency = np.clip(
-        base_efficiency - INTERFACE_PROPULSION_PENALTY * interface_factor,
-        WATER_PROPULSION_EFFECTIVENESS,
-        AIR_PROPULSION_EFFECTIVENESS,
+        (base_efficiency - INTERFACE_PROPULSION_PENALTY * interface_factor)
+        * float(propulsion_scale),
+        WATER_PROPULSION_EFFECTIVENESS * 0.50,
+        AIR_PROPULSION_EFFECTIVENESS * 1.10,
     )
 
-    return imm, buoyancy_force, drag, drag_mag, propulsion_efficiency
+    return imm, buoyancy_force, drag, drag_mag, propulsion_efficiency, relative_velocity
 
 
 # =============================================================================
@@ -1458,7 +1519,13 @@ def calculate_motor_torques(motor_thrusts, arm):
     ])
 
 
-def run_simulation():
+def run_simulation(
+    current_enabled=False,
+    random_seed=SENSOR_RANDOM_SEED,
+    drag_scale=1.0,
+    propulsion_scale=1.0,
+    current_scale=1.0,
+):
 
     N = int(SIMULATION_TIME / DT)
     time = np.arange(N) * DT
@@ -1471,7 +1538,7 @@ def run_simulation():
 
     motors = [Motor(), Motor(), Motor(), Motor()]
 
-    sensor = SensorSimulator()
+    sensor = SensorSimulator(seed=random_seed)
     estimator = MultiModalStateEstimator()
     controller = AdaptivePredictiveController()
 
@@ -1483,6 +1550,7 @@ def run_simulation():
         "desired_angles", "requested_force", "feasible_force",
         "predicted_position", "predicted_velocity",
         "raw_torque", "commanded_torque", "torque",
+        "water_current", "relative_water_velocity",
     ]
 
     results = {name: np.zeros((N, 3)) for name in vector_names}
@@ -1494,6 +1562,9 @@ def run_simulation():
         "arm_length", "inertia_scale", "commanded_direction_error",
         "actual_direction_error", "torque_scale", "torque_authority_scale",
         "force_limit_scale", "impact_force", "impact_normal_speed",
+        "current_speed", "current_scale", "plant_drag_scale",
+        "plant_propulsion_scale", "relative_water_speed",
+        "disturbance_drag_force",
         "position_estimation_error", "velocity_estimation_error",
         "attitude_estimation_error", "estimator_confidence",
         "position_covariance_trace", "kp_scale", "kd_scale",
@@ -1521,8 +1592,18 @@ def run_simulation():
 
         (morphology, morphology_rate, _, arm, I, I_rate, inertia_scale) = morphology_parameters(t)
 
-        (immersion, buoyancy_force, drag, drag_magnitude, efficiency) = medium_effects(
-            position, velocity
+        plant_drag_coefficient = WATER_DRAG_COEFFICIENT * float(drag_scale)
+        plant_propulsion_scale = float(propulsion_scale)
+        nominal_current = STAGE5C_CURRENT_VECTOR * float(current_scale)
+        plant_current = (
+            stage5c_water_current(t, immersion_fraction(position[2]), nominal_current)
+            if current_enabled else np.zeros(3)
+        )
+
+        (immersion, buoyancy_force, drag, drag_magnitude, efficiency, relative_velocity) = medium_effects(
+            position, velocity, water_current=plant_current,
+            drag_coefficient=plant_drag_coefficient,
+            propulsion_scale=plant_propulsion_scale,
         )
 
         measurements = sensor.measure(
@@ -1537,7 +1618,7 @@ def run_simulation():
         estimated_angular_rates = estimator.angular_rates
         estimated_bias_body = estimator.bias_body
 
-        (estimated_immersion, estimated_buoyancy, estimated_drag, _, estimated_efficiency) = (
+        (estimated_immersion, estimated_buoyancy, estimated_drag, _, estimated_efficiency, _) = (
             medium_effects(estimated_position, estimated_velocity)
         )
 
@@ -1623,6 +1704,8 @@ def run_simulation():
         results["raw_torque"][i] = controller_output["raw_torque"]
         results["commanded_torque"][i] = controller_output["commanded_torque"]
         results["torque"][i] = total_torque
+        results["water_current"][i] = plant_current
+        results["relative_water_velocity"][i] = relative_velocity
 
         results["requested_thrust"][i] = controller_output["requested_thrust"]
         results["commanded_thrust"][i] = np.sum(commanded_motor_thrusts)
@@ -1655,6 +1738,12 @@ def run_simulation():
 
         results["impact_force"][i] = impact_force_magnitude
         results["impact_normal_speed"][i] = impact_normal_speed
+        results["current_speed"][i] = np.linalg.norm(plant_current)
+        results["current_scale"][i] = float(current_scale) if current_enabled else 0.0
+        results["plant_drag_scale"][i] = float(drag_scale)
+        results["plant_propulsion_scale"][i] = float(propulsion_scale)
+        results["relative_water_speed"][i] = np.linalg.norm(relative_velocity)
+        results["disturbance_drag_force"][i] = drag_magnitude
 
         results["position_estimation_error"][i] = np.linalg.norm(estimated_position - position)
         results["velocity_estimation_error"][i] = np.linalg.norm(estimated_velocity - velocity)
@@ -1823,6 +1912,20 @@ def calculate_metrics(results):
         "Maximum buoyancy (N)": float(results["buoyancy"].max()),
         "Maximum hydrodynamic drag (N)": float(results["drag"].max()),
 
+        "Maximum water-current speed (m/s)": float(results["current_speed"].max()),
+        "Mean underwater water-current speed (m/s)": float(
+            np.mean(results["current_speed"][underwater_mask])
+        ),
+        "Maximum relative water speed (m/s)": float(results["relative_water_speed"].max()),
+        "Mean underwater relative water speed (m/s)": float(
+            np.mean(results["relative_water_speed"][underwater_mask])
+        ),
+        "Maximum disturbance hydrodynamic drag (N)": float(
+            results["disturbance_drag_force"].max()
+        ),
+        "Plant drag scale": float(results["plant_drag_scale"][0]),
+        "Plant propulsion scale": float(results["plant_propulsion_scale"][0]),
+
         "Maximum water-entry impact force (N)": float(results["impact_force"].max()),
         "Water-entry impact impulse (N s)": float(np.trapz(results["impact_force"], time)),
         "Maximum water-entry normal speed (m/s)": float(results["impact_normal_speed"].max()),
@@ -1965,6 +2068,106 @@ def calculate_metrics(results):
     return metrics
 
 
+
+# =============================================================================
+# STAGE 5C ROBUSTNESS EXPERIMENTS
+# =============================================================================
+
+def summarize_case(name, results):
+    metrics = calculate_metrics(results)
+    print(f"\n{name}")
+    print("-" * 76)
+    for key in [
+        "Final position error (m)",
+        "RMS 3-D tracking error (m)",
+        "Maximum underwater speed (m/s)",
+        "Maximum hydrodynamic drag (N)",
+        "Maximum water-current speed (m/s)",
+        "Maximum relative water speed (m/s)",
+        "Torque authority-limited events",
+        "Force feasibility limiting events",
+        "Maximum motor RPM",
+    ]:
+        print(f"{key:<55}: {metrics[key]:.6f}")
+    return metrics
+
+
+def run_stage5c_experiment():
+    """Run nominal, disturbed-current, and bounded Monte Carlo cases."""
+    nominal_results = run_simulation(current_enabled=False, random_seed=SENSOR_RANDOM_SEED)
+    current_results = run_simulation(
+        current_enabled=True,
+        random_seed=SENSOR_RANDOM_SEED,
+        current_scale=1.0,
+    )
+
+    rng = np.random.default_rng(STAGE5C_MONTE_CARLO_SEED)
+    records = []
+
+    for case_id in range(STAGE5C_MONTE_CARLO_RUNS):
+        drag_scale = rng.uniform(1.0 - STAGE5C_DRAG_UNCERTAINTY, 1.0 + STAGE5C_DRAG_UNCERTAINTY)
+        propulsion_scale = rng.uniform(1.0 - STAGE5C_PROPULSION_UNCERTAINTY, 1.0 + STAGE5C_PROPULSION_UNCERTAINTY)
+        current_scale = rng.uniform(1.0 - STAGE5C_CURRENT_UNCERTAINTY, 1.0 + STAGE5C_CURRENT_UNCERTAINTY)
+        seed = int(rng.integers(0, 2**31 - 1))
+
+        result = run_simulation(
+            current_enabled=True,
+            random_seed=seed,
+            drag_scale=drag_scale,
+            propulsion_scale=propulsion_scale,
+            current_scale=current_scale,
+        )
+        m = calculate_metrics(result)
+        records.append({
+            "run": case_id + 1,
+            "seed": seed,
+            "drag_scale": drag_scale,
+            "propulsion_scale": propulsion_scale,
+            "current_scale": current_scale,
+            "final_position_error_m": m["Final position error (m)"],
+            "rms_tracking_error_m": m["RMS 3-D tracking error (m)"],
+            "max_underwater_speed_mps": m["Maximum underwater speed (m/s)"],
+            "max_current_mps": m["Maximum water-current speed (m/s)"],
+            "max_relative_water_speed_mps": m["Maximum relative water speed (m/s)"],
+            "torque_authority_limited_events": m["Torque authority-limited events"],
+            "force_limiting_events": m["Force feasibility limiting events"],
+            "max_motor_rpm": m["Maximum motor RPM"],
+        })
+
+    return nominal_results, current_results, records
+
+
+def save_stage5c_monte_carlo(records):
+    import csv
+    path = os.path.join(RESULTS_DIRECTORY, "Stage_5C_monte_carlo.csv")
+    if not records:
+        return path
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(records[0].keys()))
+        writer.writeheader()
+        writer.writerows(records)
+    return path
+
+
+def stage5c_robustness_metrics(nominal_metrics, current_metrics, records):
+    final_errors = np.array([r["final_position_error_m"] for r in records], dtype=float)
+    rms_errors = np.array([r["rms_tracking_error_m"] for r in records], dtype=float)
+
+    return {
+        "Nominal final position error (m)": nominal_metrics["Final position error (m)"],
+        "Current-disturbed final position error (m)": current_metrics["Final position error (m)"],
+        "Current-induced final-error increase (m)": current_metrics["Final position error (m)"] - nominal_metrics["Final position error (m)"],
+        "Current-disturbed RMS tracking error (m)": current_metrics["RMS 3-D tracking error (m)"],
+        "Monte Carlo runs": len(records),
+        "Monte Carlo mean final error (m)": float(final_errors.mean()),
+        "Monte Carlo RMS final error (m)": float(np.sqrt(np.mean(final_errors**2))),
+        "Monte Carlo worst final error (m)": float(final_errors.max()),
+        "Monte Carlo 95th percentile final error (m)": float(np.percentile(final_errors, 95.0)),
+        "Monte Carlo mean RMS tracking error (m)": float(rms_errors.mean()),
+        "Monte Carlo worst RMS tracking error (m)": float(rms_errors.max()),
+        "Monte Carlo runs with final error < 0.50 m": int(np.sum(final_errors < 0.50)),
+    }
+
 # =============================================================================
 # REGRESSION CHECK
 # =============================================================================
@@ -2022,9 +2225,9 @@ def make_plots(results):
         axes[j].grid()
         axes[j].legend()
     axes[-1].set_xlabel("Time (s)")
-    fig.suptitle("MorphoAqua - Stage 5B-4 (corrected) True, Estimated and Target Position")
+    fig.suptitle("MorphoAqua - Stage 5C True, Estimated and Target Position")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_position_tracking.png")
+    savefig(fig, "Stage_5C_position_tracking.png")
 
     # -- 3-D trajectory --
     fig = plt.figure(figsize=(12, 10))
@@ -2044,9 +2247,9 @@ def make_plots(results):
     ax.set_zlabel("Z (m)")
     ax.legend()
     ax.grid()
-    ax.set_title("MorphoAqua - Stage 5B-4 (corrected) Adaptive / Predictive 3-D Trajectory")
+    ax.set_title("MorphoAqua - Stage 5C Adaptive / Predictive 3-D Trajectory")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_3D_adaptive_predictive_trajectory.png")
+    savefig(fig, "Stage_5C_3D_adaptive_predictive_trajectory.png")
 
     # -- Control / medium response --
     fig, axes = plt.subplots(5, 1, figsize=(13, 16), sharex=True)
@@ -2091,9 +2294,9 @@ def make_plots(results):
     axes[4].legend(ncol=5, fontsize=8)
     axes[4].grid()
 
-    fig.suptitle("MorphoAqua - Stage 5B-4 (corrected) Actuator-Aware Adaptive Control and Medium Response")
+    fig.suptitle("MorphoAqua - Stage 5C Actuator-Aware Adaptive Control and Medium Response")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_control_medium_response.png")
+    savefig(fig, "Stage_5C_control_medium_response.png")
 
     # -- Adaptive / predictive diagnostics --
     fig, axes = plt.subplots(5, 1, figsize=(13, 16), sharex=True)
@@ -2133,9 +2336,9 @@ def make_plots(results):
     axes[4].legend(fontsize=8)
     axes[4].grid()
 
-    fig.suptitle("MorphoAqua - Stage 5B-4 (corrected) Adaptive Scheduling, Prediction and Actuator Feasibility")
+    fig.suptitle("MorphoAqua - Stage 5C Adaptive Scheduling, Prediction and Actuator Feasibility")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_adaptive_predictive_response.png")
+    savefig(fig, "Stage_5C_adaptive_predictive_response.png")
 
     # -- Direction / impact --
     fig, axes = plt.subplots(3, 1, figsize=(13, 11), sharex=True)
@@ -2159,9 +2362,9 @@ def make_plots(results):
     axes[2].legend()
     axes[2].grid()
 
-    fig.suptitle("MorphoAqua - Stage 5B-4 (corrected) Direction Feasibility and Actuator Response")
+    fig.suptitle("MorphoAqua - Stage 5C Direction Feasibility and Actuator Response")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_direction_impact_response.png")
+    savefig(fig, "Stage_5C_direction_impact_response.png")
 
     # -- Morphology / inertia --
     fig, axes = plt.subplots(2, 1, figsize=(13, 8), sharex=True)
@@ -2178,9 +2381,9 @@ def make_plots(results):
     axes[1].legend()
     axes[1].grid()
 
-    fig.suptitle("MorphoAqua - Stage 5B-4 (corrected) Morphology and Time-Varying Inertia")
+    fig.suptitle("MorphoAqua - Stage 5C Morphology and Time-Varying Inertia")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_morphology_inertia.png")
+    savefig(fig, "Stage_5C_morphology_inertia.png")
 
     # -- Sensors / estimation --
     fig, axes = plt.subplots(5, 1, figsize=(13, 17), sharex=True)
@@ -2227,10 +2430,10 @@ def make_plots(results):
     axes[4].legend(ncol=3, fontsize=8)
     axes[4].grid()
 
-    fig.suptitle("MorphoAqua - Stage 5B-4 (corrected) Sensors and State Estimation\n"
+    fig.suptitle("MorphoAqua - Stage 5C Sensors and State Estimation\n"
                  "(attitude drift after ~t=14s is expected -- see module docstring)")
     plt.tight_layout()
-    savefig(fig, "Stage_5B4_sensor_estimation.png")
+    savefig(fig, "Stage_5C_sensor_estimation.png")
 
 
 # =============================================================================
@@ -2238,75 +2441,127 @@ def make_plots(results):
 # =============================================================================
 
 def main():
-
     print("=" * 76)
-    print("MORPHOAQUA - STAGE 5B-4 (CORRECTED)")
-    print("ACTUATOR-AWARE ADAPTIVE / PREDICTIVE CONTROL")
+    print("MORPHOAQUA - STAGE 5C")
+    print("ROBUST CROSS-MEDIUM CONTROL")
     print("=" * 76)
-    print()
-    print("Corrections applied vs. original Stage 5B-4 (see module docstring")
-    print("for the experimental evidence behind each):")
-    print("  FIX 1: removed backwards immersion-driven kd_scale increase")
-    print("  FIX 2: efficiency-aware horizontal acceleration ceiling")
-    print(f"         (ACCEL_FLOOR_FACTOR={ACCEL_FLOOR_FACTOR}, chosen with margin")
-    print("          from an experimentally-found instability cliff)")
-    print("  FIX 3: corrected sensor-availability percentage denominator")
-    print("  FIX 4: non-degenerate adaptive attitude gain scheduling")
-    print("  NOTE:  attitude drift after submersion is documented, not patched")
-    print("         -- see module docstring for why.")
+    print("Stage 5C controller: FROZEN")
+    print("Mission trajectory: UNCHANGED")
+    print("Reference governor: NONE")
+    print("Primary disturbance: underwater current through relative-velocity drag")
     print()
 
-    results = run_simulation()
-    metrics = calculate_metrics(results)
+    nominal_results, current_results, records = run_stage5c_experiment()
+    nominal_metrics = calculate_metrics(nominal_results)
+    current_metrics = calculate_metrics(current_results)
+    robustness = stage5c_robustness_metrics(nominal_metrics, current_metrics, records)
 
-    print("STAGE 5B-4 (CORRECTED) PERFORMANCE METRICS")
+    print("STAGE 5C NOMINAL BASELINE")
     print("-" * 76)
-
-    for key, value in metrics.items():
-        if isinstance(value, int):
-            formatted = str(value)
-        elif isinstance(value, float) and np.isnan(value):
-            formatted = "NaN"
+    for k, v in nominal_metrics.items():
+        if isinstance(v, (int, np.integer)):
+            print(f"{k:<62}: {v}")
+        elif isinstance(v, float) and np.isnan(v):
+            print(f"{k:<62}: NaN")
         else:
-            formatted = f"{value:.6f}"
-        print(f"{key:<62}: {formatted}")
+            print(f"{k:<62}: {v:.6f}")
 
+    print("\nSTAGE 5C UNDERWATER-CURRENT CASE")
     print("-" * 76)
+    for k, v in current_metrics.items():
+        if isinstance(v, (int, np.integer)):
+            print(f"{k:<62}: {v}")
+        elif isinstance(v, float) and np.isnan(v):
+            print(f"{k:<62}: NaN")
+        else:
+            print(f"{k:<62}: {v:.6f}")
 
-    # Single-run regression gate. Do not call validate_regression() here
-    # because that helper intentionally performs a second full simulation.
-    final_error = float(metrics["Final position error (m)"])
-    if final_error >= 0.30:
+    print("\nSTAGE 5C ROBUSTNESS SUMMARY")
+    print("-" * 76)
+    for k, v in robustness.items():
+        print(f"{k:<62}: {v:.6f}" if isinstance(v, float) else f"{k:<62}: {v}")
+
+    # The frozen nominal regression remains the Stage 5C gate.
+    if nominal_metrics["Final position error (m)"] >= 0.30:
         raise RuntimeError(
-            f"Stage 5B-4 regression failed: final position error = {final_error:.4f} m"
+            "Frozen Stage 5C regression failed: nominal final position error "
+            f"= {nominal_metrics['Final position error (m)']:.4f} m"
         )
-    print(
-        f"[REGRESSION] PASS: final position error = {final_error:.4f} m < 0.30 m"
-    )
+
+    # Stage 5C is a robustness experiment, not a new tracking target.
+    # We therefore report degradation rather than imposing an arbitrary
+    # new performance threshold on the disturbed case.
+    print("\n[REGRESSION] PASS: frozen nominal Stage 5C baseline remains < 0.30 m.")
+    print("[STAGE 5C] Disturbance/uncertainty results are reported relative to that baseline.")
 
     np.savez_compressed(
-        os.path.join(RESULTS_DIRECTORY, "Stage_5B4_final_results.npz"),
-        **results,
+        os.path.join(RESULTS_DIRECTORY, "Stage_5C_nominal_results.npz"),
+        **nominal_results,
     )
+    np.savez_compressed(
+        os.path.join(RESULTS_DIRECTORY, "Stage_5C_current_results.npz"),
+        **current_results,
+    )
+    np.savez_compressed(
+        os.path.join(RESULTS_DIRECTORY, "Stage_5C_robustness_summary.npz"),
+        **{k.replace(" ", "_").replace("(", "").replace(")", "").replace("-", "_"): v for k, v in robustness.items()},
+    )
+    csv_path = save_stage5c_monte_carlo(records)
 
-    make_plots(results)
+    make_plots(current_results)
 
-    print()
-    print("Results saved to:")
+    # Dedicated Stage 5C comparison plot.
+    fig, axes = plt.subplots(2, 1, figsize=(13, 9), sharex=True)
+    axes[0].plot(nominal_results["time"], nominal_results["position"][:, 0], label="Nominal X")
+    axes[0].plot(current_results["time"], current_results["position"][:, 0], label="Current-disturbed X")
+    axes[0].plot(current_results["time"], current_results["target_position"][:, 0], "--", label="Target X")
+    axes[0].set_ylabel("X (m)")
+    axes[0].legend()
+    axes[0].grid()
+    axes[1].plot(nominal_results["time"], nominal_results["position"][:, 1], label="Nominal Y")
+    axes[1].plot(current_results["time"], current_results["position"][:, 1], label="Current-disturbed Y")
+    axes[1].plot(current_results["time"], current_results["target_position"][:, 1], "--", label="Target Y")
+    axes[1].set_ylabel("Y (m)")
+    axes[1].set_xlabel("Time (s)")
+    axes[1].legend()
+    axes[1].grid()
+    fig.suptitle("MorphoAqua - Stage 5C Nominal vs Underwater-Current Disturbance")
+    plt.tight_layout()
+    savefig(fig, "Stage_5C_nominal_vs_current.png")
+
+    fig, axes = plt.subplots(3, 1, figsize=(13, 11), sharex=True)
+    axes[0].plot(current_results["time"], current_results["water_current"][:, 0], label="Current X")
+    axes[0].plot(current_results["time"], current_results["water_current"][:, 1], label="Current Y")
+    axes[0].set_ylabel("Current (m/s)")
+    axes[0].legend()
+    axes[0].grid()
+    axes[1].plot(current_results["time"], current_results["relative_water_speed"], label="Relative water speed")
+    axes[1].plot(current_results["time"], current_results["drag"], label="Hydrodynamic drag magnitude")
+    axes[1].set_ylabel("Speed / drag")
+    axes[1].legend()
+    axes[1].grid()
+    axes[2].plot(current_results["time"], current_results["torque_authority_scale"], label="Torque authority scale")
+    axes[2].plot(current_results["time"], current_results["force_limit_scale"], label="Force feasibility scale")
+    axes[2].set_ylabel("Scale")
+    axes[2].set_xlabel("Time (s)")
+    axes[2].legend()
+    axes[2].grid()
+    fig.suptitle("MorphoAqua - Stage 5C Disturbance Rejection and Actuator Response")
+    plt.tight_layout()
+    savefig(fig, "Stage_5C_disturbance_response.png")
+
+    print("\nStage 5C outputs saved:")
     for filename in [
-        "Stage_5B4_position_tracking.png",
-        "Stage_5B4_3D_adaptive_predictive_trajectory.png",
-        "Stage_5B4_control_medium_response.png",
-        "Stage_5B4_adaptive_predictive_response.png",
-        "Stage_5B4_direction_impact_response.png",
-        "Stage_5B4_morphology_inertia.png",
-        "Stage_5B4_sensor_estimation.png",
-        "Stage_5B4_final_results.npz",
+        "Stage_5C_nominal_results.npz",
+        "Stage_5C_current_results.npz",
+        "Stage_5C_robustness_summary.npz",
+        "Stage_5C_monte_carlo.csv",
+        "Stage_5C_nominal_vs_current.png",
+        "Stage_5C_disturbance_response.png",
     ]:
         print(os.path.join(RESULTS_DIRECTORY, filename))
 
-    print()
-    print("Stage 5B-4 (corrected) simulation completed.")
+    print("\nStage 5C completed.")
 
 
 if __name__ == "__main__":
