@@ -17,7 +17,12 @@
 4. [Stage 3A: Rotor Mixer and Actuator Allocation](#stage-3a-rotor-mixer-and-actuator-allocation)
 5. [Stage 3B: Torque Authority, Force Feasibility, and Command Limiting](#stage-3b-torque-authority-force-feasibility-and-command-limiting)
 6. [Implementation Details](#implementation-details)
-7. [Formula Sources and References](#formula-sources-and-references)
+7. [Stage 4A: Cross-Medium Hydrodynamic Transition](#stage-4a-cross-medium-hydrodynamic-transition)
+8. [Stage 4B: Water-Phase Control with Buoyancy and Drag Compensation](#stage-4b-water-phase-control-with-buoyancy-and-drag-compensation)
+9. [Stage 5: Morphing and Time-Varying Inertia Control](#stage-5-morphing-and-time-varying-inertia-control)
+10. [Stage 5B: Adaptive Morphology-Aware Control](#stage-5b-adaptive-morphology-aware-control)
+11. [Stage 5C: Robust Cross-Medium Control](#stage-5c-robust-cross-medium-control)
+12. [Formula Sources and References](#formula-sources-and-references)
 
 ---
 
