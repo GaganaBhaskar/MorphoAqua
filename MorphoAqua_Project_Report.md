@@ -5,7 +5,9 @@
 
 ## Executive Summary
 
-**MorphoAqua** is a Python-based physics simulation and control framework for a morphing aerial-aquatic robot. The project implements a comprehensive 6-DOF (degree of freedom) rigid-body dynamics mode[...]
+**MorphoAqua** is a Python-based physics simulation and control framework for a morphing aerial-aquatic robot. The project implements a comprehensive 6-DOF (degree of freedom) rigid-body dynamics model, a hierarchical multirotor control architecture, and a cross-medium simulation environment spanning air, the air-water interface, and submerged operation. The framework explicitly includes rotor allocation, actuator authority limiting, medium-dependent drag, buoyancy, and variable inertia due to morphology changes.
+
+The report below documents the underlying equations and references, while also distinguishing between literature-grounded dynamics and the heuristic tuning used in the later adaptive and predictive controller stages.
 
 ---
 
@@ -92,7 +94,7 @@ Where: $c_φ = \cos(φ)$, $s_φ = \sin(φ)$, and similarly for θ and ψ.
 - Siciliano, B., Sciavicco, L., Villani, L., & Oriolo, G. (2009). *Robotics: Modelling, Planning, and Control*. Springer.
 - Bouabdallah, S., Murrieri, P., & Siegwart, R. (2004). Design and control of an indoor micro quadrotor. *Proceedings of the 2004 IEEE ICRA*.
 
-**Implementation:** `controller.py` lines 50-91 and `dynamics.py` lines 24-56.
+**Implementation:** `controller.py` and `dynamics.py`.
 
 ---
 
@@ -100,7 +102,7 @@ Where: $c_φ = \cos(φ)$, $s_φ = \sin(φ)$, and similarly for θ and ψ.
 
 #### 1.2.1 Equation of Motion
 
-The world-frame translational acceleration is computed from three force components:
+The world-frame translational acceleration is computed from the dominant force components:
 
 $$\mathbf{a}_{world} = \frac{1}{m} \left( \mathbf{F}_{thrust} + \mathbf{F}_{gravity} + \mathbf{F}_{drag} \right)$$
 
@@ -114,7 +116,7 @@ Where:
 - Craig, J. J. (1989). *Introduction to Robotics: Mechanics and Control*. Addison-Wesley.
 - Standard rigid-body mechanics formulation.
 
-**Implementation:** `dynamics.py` lines 81-119.
+**Implementation:** `dynamics.py`.
 
 ---
 
@@ -131,7 +133,7 @@ $T_{total}$ = total thrust from all four rotors (Newtons).
 
 **Source:** Standard coordinate transformation for multirotor vehicles.
 
-**Implementation:** `dynamics.py` lines 92-101.
+**Implementation:** `dynamics.py`.
 
 ---
 
@@ -143,24 +145,24 @@ Where $g = 9.81$ m/s² (standard Earth gravity).
 
 **Source:** Classical mechanics.
 
-**Implementation:** `dynamics.py` lines 103-107.
+**Implementation:** `dynamics.py`.
 
 ---
 
 #### 1.2.4 Aerodynamic Drag Force (Quadratic Drag)
 
-For velocities typical in drone flight, drag follows a **quadratic relationship** with velocity:
+For speeds typical of drone flight, drag follows a **quadratic relationship** with velocity:
 
 $$\mathbf{F}_{drag} = -\frac{1}{2} ρ C_D A \|\mathbf{v}\| \mathbf{v}$$
 
 Where:
 - $ρ$ = air density (kg/m³, typically 1.225 at sea level)
-- $C_D$ = drag coefficient (dimensionless, typically 0.47–1.28 depending on shape)
+- $C_D$ = drag coefficient (dimensionless)
 - $A$ = reference cross-sectional area (m²)
 - $\|\mathbf{v}\|$ = speed (magnitude of velocity)
 - $\mathbf{v}$ = velocity vector (m/s)
 
-The formula includes both magnitude and direction: $\|\mathbf{v}\| \mathbf{v}$ ensures drag opposes motion.
+The structure $\|\mathbf{v}\|\mathbf{v}$ ensures the drag force opposes motion.
 
 **Typical Parameter Values (MorphoAqua):**
 - Air density: ρ = 1.225 kg/m³
@@ -169,9 +171,11 @@ The formula includes both magnitude and direction: $\|\mathbf{v}\| \mathbf{v}$ e
 
 **Source:**
 - Anderson, J. D. (2000). *Introduction to Flight* (4th ed.). McGraw-Hill.
-- Lentink, D., & Dickinson, M. H. (2009). Rotational accelerations stabilize leading edge vortices on revolving fly wings. *Journal of Experimental Biology*, 212(16), 2705-2719.
+- Hoerner, S. F. (1965). *Fluid-Dynamic Drag*. Hoerner Fluid Dynamics.
 
-**Implementation:** `dynamics.py` lines 59-78.
+**Note:** For a body-drag model such as this one, Anderson and Hoerner are more directly relevant than the wing-focused biology paper by Lentink & Dickinson.
+
+**Implementation:** `dynamics.py`.
 
 ---
 
@@ -198,14 +202,14 @@ Where:
 
 **Gyroscopic Term Interpretation:**
 
-The term $\mathbf{ω} \times (I \mathbf{ω})$ is the gyroscopic torque. When a spinning object (large angular momentum) experiences a torque perpendicular to its spin axis, the gyroscopic effect cause[...]
+The term $\mathbf{ω} \times (I \mathbf{ω})$ is the gyroscopic torque. When a spinning object experiences a torque perpendicular to its spin axis, the gyroscopic effect causes precession.
 
 **Source:**
 - Goldstein, H. (1980). *Classical Mechanics* (2nd ed.). Addison-Wesley.
 - Murray, R. M., Sastry, S. S., & Zexiang, L. (1994). *A Mathematical Introduction to Robotic Manipulation*. CRC Press.
 - Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*. Princeton University Press.
 
-**Implementation:** `dynamics.py` lines 122-147.
+**Implementation:** `dynamics.py`.
 
 ---
 
@@ -227,9 +231,9 @@ $$I_y ≈ \frac{m}{12}(l^2 + h^2)$$
 $$I_z ≈ \frac{m}{12}(l^2 + w^2)$$
 
 **Source:** 
-- Classical mechanics and rigid body inertia calculations.
+- Classical mechanics and rigid-body inertia calculations.
 
-**Implementation:** `robot_parameters.py` lines 59-70.
+**Implementation:** `robot_parameters.py`.
 
 ---
 
@@ -248,11 +252,11 @@ Where:
 
 **Physical Basis:**
 
-Rotor thrust arises from aerodynamic lift on the rotating blades. The lift force is proportional to dynamic pressure ($\frac{1}{2}ρ v^2$) and blade area. Since $v = ω \cdot r$ (blade velocity propor[...]
+Rotor thrust arises from aerodynamic lift on the rotating blades. The lift force is proportional to dynamic pressure $\frac{1}{2}ρ v^2$ and blade area. Since $v = ω \cdot r$, thrust is expected to scale with $ω^2$.
 
 **Hover Condition:**
 
-For a quadrotor to hover, total thrust must equal weight:
+For a quadrotor to hover, total thrust must approximately equal weight:
 
 $$T_{total} = \sum_{i=1}^{4} T_i = m \cdot g$$
 
@@ -267,13 +271,15 @@ $$ω_{hover} = \sqrt{\frac{m \cdot g}{4 \cdot K_F}}$$
 **MorphoAqua Parameters:**
 - $K_F = 1.0 \times 10^{-5}$ N·s²/rad² (assumed model parameter)
 - Mass = 1.5 kg
-- Hover RPM calculation: ~3700 RPM per rotor
+- Hover RPM calculation using this coefficient: about 5,800 RPM per rotor
+
+This differs from the earlier informal ~3700 RPM estimate; using the repository's parameter values, $ω_{hover}$ is approximately 606 rad/s, which corresponds to roughly 5,790 RPM. This is therefore a model-parameter and calibration matter, not a universal rotor constant.
 
 **Source:**
 - Mellinger, D., & Kumar, V. (2011). Minimum snap trajectory generation and control for quadrotors. *IEEE ICRA*, pp. 2520-2525.
 - Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*.
 
-**Implementation:** `rotor_model.py` lines 20-44.
+**Implementation:** `rotor_model.py` and `simulation.py`.
 
 ---
 
@@ -290,8 +296,8 @@ $$ω_{new} = ω + ω_{rate} \cdot Δt$$
 
 Where:
 - $τ_m$ = motor time constant (seconds, typically 0.05–0.1 s)
-- $ω_{cmd}$ = commanded RPM
-- $ω$ = actual RPM (state variable)
+- $ω_{cmd}$ = commanded angular speed
+- $ω$ = actual angular speed (state variable)
 - $Δt$ = simulation time step
 
 **Physical Interpretation:**
@@ -307,7 +313,7 @@ The time constant $τ_m$ represents the combined effect of:
 **Source:**
 - Standard first-order system modeling from control theory; widely used in multirotor dynamics literature.
 
-**Implementation:** `motor_model.py` lines 14-36.
+**Implementation:** `motor_model.py`.
 
 ---
 
@@ -325,7 +331,7 @@ $$\text{RPM} = ω \text{ (rad/s)} \times \frac{60}{2π}$$
 
 ### 1.5 Motor Reaction Torque (Yaw Dynamics)
 
-In addition to thrust, each rotor produces a reaction torque about the Z-axis (proportional to its angular velocity) due to motor friction and air resistance:
+In addition to thrust, each rotor produces a reaction torque about the Z-axis (proportional to its angular velocity or rotor speed, depending on the chosen simplification). The report uses the common low-order approximation:
 
 $$τ_{yaw,i} = K_M \cdot ω_i$$
 
@@ -337,12 +343,12 @@ Where:
 **MorphoAqua Parameter:**
 - $K_M = 1.5 \times 10^{-7}$ N·m·s/rad
 
-**Note:** The current implementation in MorphoAqua computes torques from desired attitudes via the attitude controller; motor reaction torque is a separate, distributed effect typically handled in the[...]
+**Important modeling note:** In the code, the same constant $K_M$ also appears in the rotor mixing matrix as a moment-arm-like torque coefficient in the yaw row, so the report treats it as a practical actuator coefficient rather than a unique physically derived rotor-drag constant. In more detailed propeller models, yaw moment is often represented as a function of rotor drag torque, which can be modeled differently from the linear first-order approximation above. The project uses $K_M$ as a simplified allocation coefficient for the simulation.
 
 **Source:**
 - Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*.
 
-**Implementation:** Noted in `robot_parameters.py` line 37.
+**Implementation:** `robot_parameters.py` and `simulation.py`.
 
 ---
 
@@ -387,7 +393,7 @@ K_d = [2.5, 2.5, 4.0]  (x, y, z components)
 - Ogata, K. (2010). *Modern Control Engineering* (5th ed.). Prentice Hall.
 - PD control is standard in trajectory tracking; gains are tuned for desired responsiveness and stability.
 
-**Implementation:** `controller.py` lines 236-240.
+**Implementation:** `controller.py` and `robot_parameters.py`.
 
 ---
 
@@ -397,7 +403,7 @@ K_d = [2.5, 2.5, 4.0]  (x, y, z components)
 
 Limit the horizontal acceleration magnitude to prevent excessive tilting:
 
-$$\text{if } \|\mathbf{a}_{h}\| > a_{h,max}: \quad \mathbf{a}_{h} ← \mathbf{a}_{h} \cdot \frac{a_{h,max}}{\|\mathbf{a}_{h}\|}$$
+$$\text{if } \|\mathbf{a}_{h}\| > a_{h,max}: \quad \mathbf{a}_{h} \leftarrow \mathbf{a}_{h} \cdot \frac{a_{h,max}}{\|\mathbf{a}_{h}\|}$$
 
 Where:
 - $\mathbf{a}_{h} = [a_x, a_y]$ = horizontal acceleration components
@@ -418,7 +424,7 @@ Where:
 
 **Source:** Standard practice in multirotor control to maintain feasible attitudes.
 
-**Implementation:** `controller.py` lines 247-294.
+**Implementation:** `controller.py`.
 
 ---
 
@@ -430,7 +436,7 @@ $$\mathbf{F}_{desired} = m \cdot \mathbf{a}_{cmd}$$
 
 Where $m$ = robot mass (1.5 kg).
 
-**Implementation:** `controller.py` lines 301-304.
+**Implementation:** `controller.py`.
 
 ---
 
@@ -440,7 +446,7 @@ Where $m$ = robot mass (1.5 kg).
 
 $$T_{total} = \|\mathbf{F}_{desired}\|$$
 
-The total thrust must be at least equal to the weight to avoid singularities:
+The total thrust is constrained to avoid singularities and unrealistic near-zero-thrust conditions:
 
 $$T_{total} = \max(T_{total}, m \cdot g)$$
 
@@ -465,8 +471,8 @@ $$θ_{desired} = \arctan2(b_x \cos(ψ) + b_y \sin(ψ), b_z)$$
 
 **Attitude Saturation:**
 
-$$φ_{desired} ← \text{clip}(φ_{desired}, -φ_{max}, φ_{max})$$
-$$θ_{desired} ← \text{clip}(θ_{desired}, -θ_{max}, θ_{max})$$
+$$φ_{desired} \leftarrow \text{clip}(φ_{desired}, -φ_{max}, φ_{max})$$
+$$θ_{desired} \leftarrow \text{clip}(θ_{desired}, -θ_{max}, θ_{max})$$
 
 **MorphoAqua Limits:**
 - $φ_{max} = 20°$ (0.349 rad)
@@ -476,7 +482,7 @@ $$θ_{desired} ← \text{clip}(θ_{desired}, -θ_{max}, θ_{max})$$
 - Mellinger, D., & Kumar, V. (2011). Minimum snap trajectory generation and control for quadrotors.
 - Beard, R. W., & McLain, T. W. (2012).
 
-**Implementation:** `controller.py` lines 310-407.
+**Implementation:** `controller.py`.
 
 ---
 
@@ -498,7 +504,7 @@ $$e = \arctan2(\sin(e), \cos(e))$$
 
 **Source:** Standard practice in attitude control.
 
-**Implementation:** `controller.py` lines 35-43.
+**Implementation:** `controller.py`.
 
 ---
 
@@ -529,7 +535,7 @@ Together, they produce a stable second-order response.
 - Ogata, K. (2010). *Modern Control Engineering*.
 - Standard PD attitude control in robotics and aerospace.
 
-**Implementation:** `controller.py` lines 525-528.
+**Implementation:** `controller.py`.
 
 ---
 
@@ -537,7 +543,7 @@ Together, they produce a stable second-order response.
 
 ### 3A.1 Rotor force-to-moment mapping
 
-The low-level actuation block converts a commanded collective thrust and body moments into four rotor thrusts. In MorphoAqua, each rotor is assumed to generate a vertical force along the body +Z axis and a reaction torque about the body axes.
+The low-level actuation block converts a commanded collective thrust and body moments into four rotor thrusts. In MorphoAqua, each rotor is assumed to generate a vertical force along the body +Z axis and a corresponding yawing reaction effect consistent with the simplified mixer model.
 
 For a square rotor layout with arm length $a$, the geometry yields the standard mixing matrix:
 
@@ -572,7 +578,7 @@ where:
 - $T$ = total collective thrust
 - $\tau_x, \tau_y, \tau_z$ = roll, pitch, and yaw moments
 - $L$ = rotor arm length
-- $K_M$ = rotor reaction-torque coefficient
+- $K_M$ = rotor reaction-torque coefficient used in the simplified model
 
 This matches the code implementation in `simulation.py`, where:
 
@@ -636,10 +642,10 @@ This prevents invalid actuation when the commanded wrench is outside the reachab
 
 This stage is grounded in standard quadrotor rotor-mixing and motor modeling literature:
 - Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*. Princeton University Press.
-- Mellinger, D., & Kumar, V. (2011). Minimum snap trajectory generation and control for quadrotors. *IEEE Transactions on Robotics*.
+- Mellinger, D., & Kumar, V. (2011). Minimum snap trajectory generation and control for quadrotors. *IEEE ICRA*.
 - Siciliano, B., Sciavicco, L., Villani, L., & Oriolo, G. (2009). *Robotics: Modelling, Planning, and Control*.
 
-**Implementation:** `simulation.py` contains `mix_matrix()`, `calculate_motor_thrusts()`, `feasible()`, `allocate_motors()`, and the motor timing logic used in the main simulation loop.
+**Implementation:** `simulation.py` contains the rotor mixer, allocation, feasibility checks, and motor timing logic used in the main simulation loop.
 
 ---
 
@@ -647,7 +653,7 @@ This stage is grounded in standard quadrotor rotor-mixing and motor modeling lit
 
 ### 3B.1 Torque authority envelope
 
-Once the rotor thrusts are known, the maximum achievable roll, pitch, and yaw moments are constrained by both the total available thrust and the available differential thrust. In the implementation, these limits are estimated from actuator authority using a conservative safety factor.
+Once the rotor thrusts are known, the maximum achievable roll, pitch, and yaw moments are constrained by both the total available thrust and the available differential thrust. The implementation uses a conservative estimate based on headroom around the collective thrust level.
 
 For a rotor set operating near hover, the differential thrust headroom is approximated by:
 
@@ -703,7 +709,7 @@ and
 
 $$\|\mathbf{F}_{h}\| \le F_z \tan(\theta_{max})$$
 
-The final command is then scaled to satisfy both inequalities. This logic is exactly implemented in:
+The final command is then scaled to satisfy both inequalities. This logic is implemented in:
 - `feasible_force_from_accel(...)`
 - `ACTUATOR_FORCE_MARGIN`
 - `MAX_ROLL`, `MAX_PITCH`
@@ -724,7 +730,7 @@ This is captured by the function:
 
 $$\text{project\_torque\_with\_collective}(T_{collective},\ \tau_{fb},\ \tau_{comp},\ arm,\ \eta)$$
 
-The reason for this step is practical: if the attitude controller requests a torque that exceeds the rotor authority, the controller should not simply saturate all torques independently, because that can drive the collective thrust out of the feasible operating region. The implementation instead preserves the collective force and reduces only the excess differential torque contribution.
+The reason for this step is practical: if the attitude controller requests a torque that exceeds the rotor authority, the controller should not simply saturate all torques independently, because that can disrupt the collective thrust and de-stabilize the flight envelope. The implementation therefore preserves the total thrust while scaling only the feedback contribution when needed.
 
 ### 3B.4 Implementation note in MorphoAqua
 
@@ -749,11 +755,11 @@ This chain is implemented in `simulation.py` through:
 
 This section is grounded in standard multirotor actuator allocation and constrained control formulations:
 - Beard, R. W., & McLain, T. W. (2012). *Small Unmanned Aircraft: Theory and Practice*.
-- Mellinger, D., & Kumar, V. (2011). Minimum snap trajectory generation and control for quadrotors. *IEEE Transactions on Robotics*.
+- Mellinger, D., & Kumar, V. (2011). Minimum snap trajectory generation and control for quadrotors. *IEEE ICRA*.
 - Mahony, R., Kumar, V., & Corke, P. (2012). Multirotor aerial vehicles: modeling, estimation, and control of quadrotor. *IEEE Robotics & Automation Magazine*.
 - Ogata, K. (2010). *Modern Control Engineering*.
 
-**Implementation:** `simulation.py` contains the full actuator-aware command-limiting logic and torque projection used by the Stage 5C controller.
+**Implementation:** `simulation.py` contains the full actuator-aware command-limiting logic and torque projection used by the later controller stages.
 
 ---
 
@@ -776,7 +782,7 @@ The main `simulation.py` orchestrates:
 
 **Simulation Parameters:**
 - Time step: $Δt = 0.002$ s (500 Hz)
-- Total duration: 15 seconds
+- Total duration: 15 seconds (for the earlier Stage 1–5 variants; the Stage 5C simulation extends to 35 seconds in the validated code)
 - Integration method: Forward Euler (simple explicit Runge-Kutta available)
 
 ---
@@ -793,7 +799,7 @@ Where:
 - Euler angles: $(φ, θ, ψ)$ in world frame (rad)
 - Angular velocity: $(p, q, r)$ in body frame (rad/s)
 
-**Total dimension: 12 DOF**
+**Total dimension: 12 states**
 
 ---
 
@@ -807,13 +813,13 @@ The system integrates using the **forward Euler method** by default:
 
 $$\mathbf{x}_{k+1} = \mathbf{x}_k + f(\mathbf{x}_k, \mathbf{u}_k, t_k) \cdot Δt$$
 
-**Stability Consideration:** Forward Euler is explicit and requires small time steps for stability. For the tested gains and $Δt = 0.002$ s, the simulation is stable.
+**Stability Consideration:** Forward Euler is explicit and requires small time steps for stability. For the tested gains and $Δt = 0.002$ s, the simulation is stable in the validated project configuration.
 
 ---
 
 ## Stage 4A: Cross-Medium Hydrodynamic Transition
 
-Stage 4A extends the air-only dynamics model to the transition regime where the robot interacts with water. In this stage, the vehicle is no longer treated as a purely aerial rigid body; instead, buoy[...]
+Stage 4A extends the air-only dynamics model to the transition regime where the robot interacts with water. In this stage, the vehicle is no longer treated as a purely aerial rigid body; instead, the model includes buoyancy, hydrodynamic drag, immersion, and reduced propulsion effectiveness.
 
 ### 4A.1 Immersion and Medium Effects
 
@@ -857,7 +863,7 @@ where:
 
 ### 4A.2 Water-Entry Interface Model
 
-The simulation includes a reduced-order water-entry impact model to capture the dominant transient effect of a partial immersion crossing. Rather than solving fully coupled CFD, the model approximates[...]
+The simulation includes a reduced-order water-entry impact model to capture the dominant transient effect of partial immersion crossing. Rather than solving fully coupled CFD, the model approximates the dominant effects of:
 - increased buoyancy
 - increased drag
 - reduced propulsion effectiveness
@@ -870,6 +876,8 @@ The implementation uses:
 - air propulsion effectiveness: $1.0$
 - water propulsion effectiveness: $0.30$
 - interface penalty: $0.015$
+
+**Implementation note:** The code implements immersion scaling explicitly in the medium model (see `medium_effects()` in `simulation.py`), rather than assuming a single fixed buoyancy term for all phases.
 
 ### 4A.3 Source Basis
 
@@ -933,6 +941,8 @@ $$
 
 This changes the feasible set of commanded acceleration and therefore the controller must account for water-resistance and buoyancy compensation.
 
+**Implementation note:** In the code, this is implemented as an immersed-force balance and not as a direct hardware-validated underwater model. It is a simulation-level approximation.
+
 ### 4B.4 Source Basis
 
 This is consistent with:
@@ -949,7 +959,7 @@ This is consistent with:
 
 ## Stage 5: Morphing and Time-Varying Inertia Control
 
-Stage 5 introduces morphology change and time-varying inertial properties. The vehicle is no longer treated as a fixed-geometry rigid body throughout the mission. Instead, the arm geometry changes ove[...]
+Stage 5 introduces morphology change and time-varying inertial properties. The vehicle is no longer treated as a fixed-geometry rigid body throughout the mission. Instead, the arm geometry changes over time and the inertia matrix changes accordingly.
 
 ### 5.1 Morphology Parameterization
 
@@ -1009,7 +1019,7 @@ This stage follows well-established literature on:
 - multirotor flight control
 - morphology-aware robot motion planning and adaption
 
-**Implementation:** `simulation.py` includes the morphology profile and time-varying inertia model used for Stage 5.
+**Implementation:** `simulation.py` includes the morphology profile and time-varying inertia model used for the later adaptive stages.
 
 ---
 
@@ -1019,7 +1029,7 @@ Stage 5B adds adaptive scheduling and predictive augmentation to handle the comb
 
 ### 5B.1 Gain Scheduling
 
-The controller computes adaptive gain scaling terms based on position error, inertia ratio, and immersion state. A representative scaling uses:
+The controller computes adaptive gain scaling terms based on position error, inertia ratio, and immersion state. A representative scaling is:
 
 $$
 \text{error\_factor} = \tanh\left(\frac{\|\mathbf{e}_p\|}{0.30}\right)
@@ -1086,25 +1096,17 @@ The Stage 5B controller is designed to remain physically plausible:
 
 This is essential because in water and morphing conditions, a nominal aerial controller would otherwise request forces and moments beyond what the motors can safely provide.
 
-### 5B.4 Source Basis
+### 5B.4 Source Basis and Honest Interpretation
 
-This stage sits at the intersection of:
-- gain scheduling
-- predictive control
-- actuator-aware wrench feasibility
-- multirotor control under variable inertia and medium change
+The Stage 5B gain-scheduling expressions are a practical engineering design, not a direct derivation from a single cited literature source. They are tuned to the project-specific medium-transition and morphology-scaling problem, and should therefore be interpreted as a heuristic schedule rather than an exact theorem-derived formula.
 
-**Implementation:** The repository includes Stage 5B output sets:
-- `results/Stage_5B1_...`
-- `results/Stage_5B2_...`
-- `results/Stage_5B3_...`
-- `results/Stage_5B4_...`
+**Implementation:** The repository includes Stage 5B output sets and adaptive schedule logic in `simulation.py`.
 
 ---
 
 ## Stage 5C: Robust Cross-Medium Control
 
-Stage 5C is the robust controller variant for the full cross-medium mission. It retains the validated mission structure while extending the adaptive and predictive architecture with explicit robustnes[...]
+Stage 5C is the robust controller variant for the full cross-medium mission. It retains the validated mission structure while extending the adaptive and predictive architecture with explicit robustness against water-current and uncertainty effects.
 
 ### 5C.1 Disturbance Model
 
@@ -1114,7 +1116,7 @@ $$
 \mathbf{v}_{rel} = \mathbf{v}_{vehicle} - \mathbf{v}_{water}
 $$
 
-Hydrodynamic drag is therefore based on relative water velocity, not just vehicle velocity. The water current is applied only after the vehicle is sufficiently submerged:
+Hydrodynamic drag is therefore based on relative water velocity, not only vehicle velocity. The water current is applied only after the vehicle is sufficiently submerged:
 
 $$
 \mathbf{v}_{water}(t) = \mathbf{v}_{current}\,r_{ramp}(t)
@@ -1158,13 +1160,15 @@ $$
 
 This is used as the frozen nominal regression threshold. Disturbed-current and uncertainty cases are treated as robustness evaluations rather than separate tracking objectives.
 
-### 5C.5 Source Basis
+### 5C.5 Source Basis and Honest Interpretation
 
 This stage builds on standard methods from:
 - adaptive control
 - gain scheduling
 - robust disturbance rejection
 - actuator-aware constraint handling for underactuated aerial-aquatic robots
+
+However, the specific Stage 5C gain schedule and acceleration-floor logic are tuned engineering choices, not direct theorem-based formulas derived from a single literature source. They are physically plausible and simulation-validated, but should be described as heuristically tuned, not strictly literature-derived.
 
 **Implementation:** The repository contains the Stage 5C artifacts and summaries:
 - `results/Stage_5C_3D_adaptive_predictive_trajectory.png`
@@ -1186,7 +1190,7 @@ This stage builds on standard methods from:
    - Comprehensive coverage of multirotor dynamics, control, and estimation.
    - Source for Euler equations, thrust models, and PD control.
 
-2. **Mellinger, D., & Kumar, V. (2011).** Minimum snap trajectory generation and control for quadrotors. *IEEE Transactions on Robotics*, 27(2), 1-12.
+2. **Mellinger, D., & Kumar, V. (2011).** Minimum snap trajectory generation and control for quadrotors. *IEEE ICRA*, pp. 2520-2525.
    - Foundational work on quadrotor trajectory tracking and attitude decomposition.
    - Source for force-to-attitude mapping.
 
@@ -1212,13 +1216,19 @@ This stage builds on standard methods from:
 
 - **Craig, J. J. (1989).** *Introduction to Robotics: Mechanics and Control*. Addison-Wesley.
 - **Murray, R. M., Sastry, S. S., & Zexiang, L. (1994).** *A Mathematical Introduction to Robotic Manipulation*. CRC Press.
-- **Lentink, D., & Dickinson, M. H. (2009).** Rotational accelerations stabilize leading edge vortices on revolving fly wings. *Journal of Experimental Biology*, 212(16), 2705-2719.
+- **Hoerner, S. F. (1965).** *Fluid-Dynamic Drag*. Hoerner Fluid Dynamics.
 
 ---
 
 ## Conclusion
 
-MorphoAqua implements a complete, physically-grounded model of multirotor dynamics and hierarchical control. All mathematical formulae are sourced from established aerospace and robotics literature, e[...]
+MorphoAqua implements a complete, physically grounded model of multirotor dynamics and hierarchical control. The core rigid-body dynamics, rotor-thrust relations, motor lag, Euler angle kinematics, and standard PD multirotor control structure are well supported by established aerospace and robotics literature.
+
+At the same time, the later stages—especially the adaptive gain scheduling and medium-transition heuristics—should be interpreted as project-specific engineering design choices rather than exact formulae from a single literature source. This is not a weakness of the project; it is a realistic and transparent description of how simulation models are often constructed. The report is therefore most accurate when it distinguishes:
+
+- literature-grounded physical equations,
+- implementation-specific modeling assumptions, and
+- tuned heuristic controller schedules.
 
 ---
 
@@ -1232,7 +1242,7 @@ MorphoAqua implements a complete, physically-grounded model of multirotor dynami
 | Drag Coefficient ($C_D$) | 0.8 | - | Assumed for body |
 | Reference Area ($A$) | 0.05 | m² | Cross-sectional area |
 | Thrust Coeff. ($K_F$) | 1.0e-5 | N·s²/rad² | Assumed; requires calibration |
-| Motor Reaction Coeff. ($K_M$) | 1.5e-7 | N·m·s/rad | Reaction torque coefficient |
+| Motor Reaction Coeff. ($K_M$) | 1.5e-7 | N·m·s/rad | Simplified reaction-torque coefficient |
 | Motor Time Constant ($τ_m$) | 0.08 | s | First-order response |
 | Simulation Step ($Δt$) | 0.002 | s | 500 Hz loop rate |
 
