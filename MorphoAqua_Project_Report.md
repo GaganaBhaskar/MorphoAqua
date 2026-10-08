@@ -579,6 +579,374 @@ $$\mathbf{x}_{k+1} = \mathbf{x}_k + f(\mathbf{x}_k, \mathbf{u}_k, t_k) \cdot Δt
 **Stability Consideration:** Forward Euler is explicit and requires small time steps for stability. For the tested gains and $Δt = 0.002$ s, the simulation is stable.
 
 ---
+---
+
+## Stage 4A: Cross-Medium Hydrodynamic Transition
+
+Stage 4A extends the air-only dynamics model to the transition regime where the robot interacts with water. In this stage, the vehicle is no longer treated as a purely aerial rigid body; instead, buoyancy, drag, and reduced propulsion effectiveness are included as the robot crosses the air-water interface.
+
+### 4A.1 Immersion and Medium Effects
+
+The immersion state is represented by a smooth indicator function:
+
+$$
+\eta(z) = \begin{cases}
+0, & z \ge z_{upper} \\
+1, & z \le z_{lower} \\
+s(u), & z_{lower} < z < z_{upper}
+\end{cases}
+$$
+
+where:
+- $\eta(z)$ = immersion fraction
+- $z_{upper}$ and $z_{lower}$ define the upper and lower water-interface boundaries
+- $s(u)$ is a smoothstep function used to avoid abrupt force switching
+
+The total force acting on the vehicle is:
+
+$$
+\mathbf{F}_{total} = \mathbf{F}_{thrust} + \mathbf{F}_{gravity} + \mathbf{F}_{buoyancy} + \mathbf{F}_{drag}
+$$
+
+with buoyancy:
+
+$$
+\mathbf{F}_{buoyancy} = \rho_{water} V_{disp} g \,\hat{z}
+$$
+
+and hydrodynamic drag:
+
+$$
+\mathbf{F}_{drag} = -\frac{1}{2}\rho_{water} C_D A \|\mathbf{v}_{rel}\| \mathbf{v}_{rel}
+$$
+
+where:
+- $\rho_{water} = 1000 \,\text{kg/m}^3$
+- $V_{disp}$ = displaced volume
+- $\mathbf{v}_{rel} = \mathbf{v}_{vehicle} - \mathbf{v}_{water}$
+
+### 4A.2 Water-Entry Interface Model
+
+The simulation includes a reduced-order water-entry impact model to capture the dominant transient effect of a partial immersion crossing. Rather than solving fully coupled CFD, the model approximates the interface behavior through:
+- increased buoyancy
+- increased drag
+- reduced propulsion effectiveness
+- a brief impact impulse during water entry
+
+The implementation uses:
+- water density: $\rho_{water} = 1000$ kg/m³
+- drag coefficient: $C_D = 0.90$
+- reference area: $A = 0.025$ m²
+- air propulsion effectiveness: $1.0$
+- water propulsion effectiveness: $0.30$
+- interface penalty: $0.015$
+
+### 4A.3 Source Basis
+
+This stage is grounded in classical fluid mechanics and aerospace dynamics:
+- Anderson, J. D. (2000). *Introduction to Flight*. McGraw-Hill.
+- Hoerner, S. F. (1965). *Fluid-Dynamic Drag*. Hoerner Fluid Dynamics.
+- Standard rigid-body force decomposition used in multirotor and marine vehicle modeling.
+
+**Implementation:** `simulation.py` contains the immersion model, water-current drag model, and water-entry disturbance logic.
+
+---
+
+## Stage 4B: Water-Phase Control with Buoyancy and Drag Compensation
+
+Stage 4B addresses the control problem after the interface transition, when the vehicle is operating in water and must compensate for the altered force balance.
+
+### 4B.1 Water-Phase Force Budget
+
+The translational dynamics in water are written as:
+
+$$
+m \dot{\mathbf{v}} = \eta_{water} \mathbf{F}_{thrust} + \mathbf{F}_{gravity} + \mathbf{F}_{buoyancy} + \mathbf{F}_{drag}
+$$
+
+where:
+- $\eta_{water}$ is the effective propulsion efficiency in water
+- $\mathbf{F}_{buoyancy}$ changes the equilibrium condition from the air hover condition
+- $\mathbf{F}_{drag}$ becomes a dominant disturbance for lateral and vertical motion
+
+This means the control law used in air cannot be directly reused without accounting for the shifted operating point.
+
+### 4B.2 Reduced Propulsion Authority
+
+The repo explicitly models reduced underwater thrust effectiveness:
+
+$$
+T_{water} = \eta_{prop,water} T_{air}
+$$
+
+with:
+
+$$
+\eta_{prop,water} \approx 0.30
+$$
+
+and additional interface penalties near the air-water boundary. In practical terms, the controller must demand more total force than in air to achieve the same acceleration under water.
+
+### 4B.3 Control Interpretation
+
+The position controller still follows the PD structure:
+
+$$
+\mathbf{a}_{cmd} = \mathbf{a}_{ff} + K_p \circ \mathbf{e}_p + K_d \circ \mathbf{e}_v
+$$
+
+but the actual plant dynamics now include:
+
+$$
+\mathbf{F}_{plant} = m\mathbf{a}_{cmd} - \mathbf{F}_{buoyancy} - \mathbf{F}_{drag}
+$$
+
+This changes the feasible set of commanded acceleration and therefore the controller must account for water-resistance and buoyancy compensation.
+
+### 4B.4 Source Basis
+
+This is consistent with:
+- Ogata, K. (2010). *Modern Control Engineering*.
+- Anderson, J. D. (2000). *Introduction to Flight*.
+- Standard hydrodynamic force modeling for submerged vehicles and robot platforms.
+
+**Implementation:** The repository includes Stage 4B artifacts:
+- `results/Stage_4B_3D_trajectory.png`
+- `results/Stage_4B_control_water_response.png`
+- `results/Stage_4B_position_tracking.png`
+
+---
+
+## Stage 5: Morphing and Time-Varying Inertia Control
+
+Stage 5 introduces morphology change and time-varying inertial properties. The vehicle is no longer treated as a fixed-geometry rigid body throughout the mission. Instead, the arm geometry changes over time, modifying both control leverage and inertia.
+
+### 5.1 Morphology Parameterization
+
+The repo models a variable arm ratio:
+
+$$
+r(t) = r_{compact} + (r_{extended} - r_{compact})\,m(t)
+$$
+
+with:
+- $r_{compact} = 0.80$
+- $r_{extended} = 1.20$
+
+The effective arm length becomes:
+
+$$
+L(t) = L_0\,r(t)
+$$
+
+and the inertia scales according to:
+
+$$
+I(t) = I_0\,r(t)^2
+$$
+
+with the corresponding derivative:
+
+$$
+\dot{I}(t) = I_0 \cdot 2r(t)\dot{r}(t)
+$$
+
+This is implemented in `simulation.py` through:
+- `COMPACT_ARM_RATIO = 0.80`
+- `EXTENDED_ARM_RATIO = 1.20`
+- `arm = ARM_LENGTH * ratio`
+- `inertia_scale = ratio ** 2`
+
+### 5.2 Control Implication
+
+The rigid-body rotational dynamics under changing inertia are:
+
+$$
+I(t)\dot{\boldsymbol{\omega}} + \dot{I}(t)\boldsymbol{\omega}
+= \boldsymbol{\tau} - \boldsymbol{\omega} \times (I(t)\boldsymbol{\omega})
+$$
+
+This means the controller must react not only to attitude error but also to:
+- changing rotational inertia
+- changing arm geometry
+- changing torque allocation capability
+- changing plant response under air-water transition and morphology changes
+
+### 5.3 Source Basis
+
+This stage follows well-established literature on:
+- rigid-body dynamics with changing inertia
+- multirotor flight control
+- morphology-aware robot motion planning and adaption
+
+**Implementation:** `simulation.py` includes the morphology profile and time-varying inertia model used for Stage 5.
+
+---
+
+## Stage 5B: Adaptive Morphology-Aware Control
+
+Stage 5B adds adaptive scheduling and predictive augmentation to handle the combined effects of changing inertia, immersion, and actuator authority.
+
+### 5B.1 Gain Scheduling
+
+The controller computes adaptive gain scaling terms based on position error, inertia ratio, and immersion state. A representative scaling uses:
+
+$$
+\text{error\_factor} = \tanh\left(\frac{\|\mathbf{e}_p\|}{0.30}\right)
+$$
+
+Then:
+
+$$
+k_{p,scale} = 1.0 + 0.030\,\text{error\_factor} + 0.018\left(\frac{I}{I_0} -1\right) - 0.012\eta
+$$
+
+$$
+k_{d,scale} = 1.0 + 0.024\max\left(\frac{I}{I_0} -1, 0\right)
+$$
+
+and the attitude gain factor is:
+
+$$
+k_{att,scale} = 1.0 + 0.018\left(\frac{I}{I_0} -1\right) - 0.008\eta + 0.010\,\text{error\_factor} + 0.010(\alpha - 0.5)
+$$
+
+where:
+- $\eta$ = immersion fraction
+- $\alpha$ = authority hint (normalized actuator feasibility)
+
+The repo explicitly bounds these schedules with:
+- `ADAPTIVE_KP_MIN = 0.97`
+- `ADAPTIVE_KP_MAX = 1.08`
+- `ADAPTIVE_KD_MIN = 1.00`
+- `ADAPTIVE_KD_MAX = 1.12`
+- `ADAPTIVE_ATT_MIN = 0.96`
+- `ADAPTIVE_ATT_MAX = 1.04`
+
+### 5B.2 Predictive Horizon and Feasible Force Envelope
+
+To improve robustness during morphology and medium transitions, the controller uses a short-horizon prediction:
+
+$$
+T_h \in [T_{h,min},T_{h,max}]
+$$
+
+with:
+- `PREDICTIVE_HORIZON_MIN = 0.105 s`
+- `PREDICTIVE_HORIZON_MAX = 0.18 s`
+
+The controller also imposes an efficiency-aware horizontal acceleration ceiling:
+
+$$
+a_{h,max} = a_{h,max,base}\left(\beta + (1-\beta)\eta_{eff}\right)
+$$
+
+where:
+- $\eta_{eff}$ = propulsion efficiency
+- $\beta$ is a floor factor to avoid unrealistic underwater demand
+
+### 5B.3 Implementation Notes
+
+The Stage 5B controller is designed to remain physically plausible:
+- gain schedules are bounded
+- predictive horizon is bounded
+- desired attitude rates are rate-limited
+- torque commands are projected to feasible actuator space
+- force commands are clipped based on actuator authority
+
+This is essential because in water and morphing conditions, a nominal aerial controller would otherwise request forces and moments beyond what the motors can safely provide.
+
+### 5B.4 Source Basis
+
+This stage sits at the intersection of:
+- gain scheduling
+- predictive control
+- actuator-aware wrench feasibility
+- multirotor control under variable inertia and medium change
+
+**Implementation:** The repository includes Stage 5B output sets:
+- `results/Stage_5B1_...`
+- `results/Stage_5B2_...`
+- `results/Stage_5B3_...`
+- `results/Stage_5B4_...`
+
+---
+
+## Stage 5C: Robust Cross-Medium Control
+
+Stage 5C is the robust controller variant for the full cross-medium mission. It retains the validated mission structure while extending the adaptive and predictive architecture with explicit robustness and actuator-feasibility logic.
+
+### 5C.1 Disturbance Model
+
+The water current is modeled as a plant-side disturbance rather than a direct measurement input:
+
+$$
+\mathbf{v}_{rel} = \mathbf{v}_{vehicle} - \mathbf{v}_{water}
+$$
+
+Hydrodynamic drag is therefore based on relative water velocity, not just vehicle velocity. The water current is applied only after the vehicle is sufficiently submerged:
+
+$$
+\mathbf{v}_{water}(t) = \mathbf{v}_{current}\,r_{ramp}(t)
+$$
+
+with:
+- `STAGE5C_CURRENT_VECTOR = [0.10, -0.06, 0.0]` m/s
+- current ramp starts at immersion roughly 0.80
+- current is deliberately hidden from the controller
+
+### 5C.2 Robustness and Uncertainty
+
+The repo includes a bounded uncertainty study using:
+- drag uncertainty: $\pm 15\%$
+- propulsion uncertainty: $\pm 10\%$
+- current uncertainty: $\pm 20\%$
+
+The Monte Carlo robustness analysis uses randomized scaling factors and measures final tracking error, RMS trajectory error, and actuator-limit events.
+
+### 5C.3 Controller Enhancements
+
+The Stage 5C controller adds:
+- bounded adaptive position gain scheduling
+- bounded adaptive velocity gain scheduling
+- bounded adaptive attitude gain scheduling
+- short-horizon predictive augmentation
+- actuator-aware force feasibility
+- desired-attitude rate limiting
+- collective-preserving torque projection
+- explicit torque-authority limiting metric
+
+These features are implemented in `simulation.py` inside the `AdaptivePredictiveController` class and the torque/force feasibility logic.
+
+### 5C.4 Regression Gate
+
+The repo defines the nominal pass criterion as:
+
+$$
+\text{Final position error} < 0.30 \,\text{m}
+$$
+
+This is used as the frozen nominal regression threshold. Disturbed-current and uncertainty cases are treated as robustness evaluations rather than separate tracking objectives.
+
+### 5C.5 Source Basis
+
+This stage builds on standard methods from:
+- adaptive control
+- gain scheduling
+- robust disturbance rejection
+- actuator-aware constraint handling for underactuated aerial-aquatic robots
+
+**Implementation:** The repository contains the Stage 5C artifacts and summaries:
+- `results/Stage_5C_3D_adaptive_predictive_trajectory.png`
+- `results/Stage_5C_control_medium_response.png`
+- `results/Stage_5C_adaptive_predictive_response.png`
+- `results/Stage_5C_direction_impact_response.png`
+- `results/Stage_5C_morphology_inertia.png`
+- `results/Stage_5C_sensor_estimation.png`
+- `results/Stage_5C_nominal_vs_current.png`
+- `results/Stage_5C_disturbance_response.png`
+
+---
 
 ## Formula Sources and References
 
